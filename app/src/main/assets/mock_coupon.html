@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="K爸測試優惠券抽選流程。純模擬，不會有真實訂單，也不能兌換。">
+  <title>K爸測試｜優惠券抽選模擬</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='15' fill='%2318b85b'/%3E%3Cpath d='M17 18h30v28H17z' fill='none' stroke='white' stroke-width='5'/%3E%3Cpath d='M24 32h16' stroke='white' stroke-width='5'/%3E%3C/svg%3E">
+  <style>
+    :root { font-family: system-ui, -apple-system, "Noto Sans TC", sans-serif; color: #252a2b; background: #f4f6f7; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 280px; }
+    button { font: inherit; cursor: pointer; }
+    .shell { width: min(100%, 520px); min-height: 100dvh; margin: auto; background: #fff; box-shadow: 0 0 28px #14291b12; padding-bottom: 98px; }
+    .safety { background: #e9fff0; color: #0c7540; border-bottom: 1px solid #b5ebc4; padding: 10px 18px; text-align: center; font-size: .95rem; font-weight: 750; }
+    .toolbar { display: flex; align-items: center; justify-content: space-between; min-height: 62px; padding: 0 17px; border-bottom: 1px solid #eceff0; }
+    .toolbar h1 { margin: 0; font-size: 1.06rem; font-weight: 750; }
+    .close { border: 0; background: transparent; color: #202526; font-size: 1.8rem; width: 42px; height: 42px; line-height: 1; }
+    .scenarios { padding: 14px 17px 0; display: flex; flex-wrap: wrap; gap: 8px; }
+    .scenarios button { border: 1px solid #d7e0db; border-radius: 999px; padding: 8px 13px; background: #fff; color: #41644d; font-size: .9rem; }
+    .scenarios button.active { color: #fff; background: #168946; border-color: #168946; }
+    .account { display: flex; gap: 11px; align-items: center; padding: 20px 18px 11px; }
+    .avatar { width: 39px; height: 39px; display: grid; place-items: center; border-radius: 50%; background: #dff7e7; color: #18773f; font-weight: 800; }
+    .account-name { font-size: .91rem; font-weight: 700; }
+    .account-id { color: #909698; font-size: .78rem; margin-top: 3px; }
+    .tags { display: flex; gap: 5px; margin: 0 18px 10px; }
+    .tags span { border: 1px solid #e6e9e7; background: #f7f8f7; color: #7e8680; padding: 2px 6px; font-size: .76rem; }
+    .content { padding: 0 18px; }
+    .title { margin: 8px 0 14px; font-size: 1.45rem; letter-spacing: .01em; }
+    .dates { color: #89908e; font-size: .9rem; line-height: 1.6; }
+    .notes { color: #8d9592; font-size: .84rem; line-height: 1.65; margin-top: 15px; }
+    .result { margin: 22px 0 0; padding: 14px 16px; border-radius: 9px; background: #f1f3f3; color: #525b59; font-weight: 650; }
+    .result.win { background: #e9f9ef; color: #168442; }
+    .more { margin-top: 32px; font-size: 1.04rem; font-weight: 750; }
+    .coupon { margin-top: 13px; width: 218px; min-height: 187px; border: 1px solid #e8eae9; border-radius: 5px; overflow: hidden; }
+    .art { height: 110px; display: grid; place-items: center; color: #16a64d; background: repeating-linear-gradient(135deg, #e8faee 0 12px, #f4fff7 12px 24px); font-size: 2.5rem; }
+    .coupon-name { padding: 12px; font-weight: 700; font-size: .91rem; }
+    .coupon-foot { padding: 8px 12px; color: #9ba19f; font-size: .78rem; }
+    .fixed { position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); width: min(100%, 520px); min-height: 72px; display: flex; align-items: center; padding: 9px 12px max(9px, env(safe-area-inset-bottom)); background: #fff; border-top: 1px solid #ecf0ed; }
+    .action { width: 100%; min-height: 51px; border: 0; border-radius: 5px; background: #10a64b; color: white; font-size: 1rem; font-weight: 750; }
+    .action:disabled { background: #b5b8b7; color: #fff; }
+    .closed { padding: 40px 20px; text-align: center; }
+    .closed h2 { font-size: 1.25rem; }
+    .closed button { border: 0; border-radius: 5px; padding: 12px 20px; background: #159749; color: #fff; }
+    body.embed .scenarios { display: none; }
+    @media (max-width: 450px) { .title { font-size: 1.25rem; } .account { padding-top: 16px; } }
+    @media (prefers-reduced-motion: no-preference) { .result { animation: rise .25s ease-out; } @keyframes rise { from { opacity: .3; transform: translateY(4px); } to { opacity: 1; transform: none; } } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="safety">K爸測試，不會有真實訂單</div>
+    <header class="toolbar"><h1>優惠券抽選模擬</h1><button class="close" id="close" aria-label="關閉">×</button></header>
+    <nav class="scenarios" aria-label="模擬情境">
+      <button type="button" data-scenario="ready">可抽選</button>
+      <button type="button" data-scenario="already">已抽過</button>
+      <button type="button" data-scenario="win">中獎結果</button>
+      <button type="button" data-scenario="expired">已失效</button>
+      <button type="button" data-scenario="error">載入錯誤</button>
+      <button type="button" data-scenario="friend">需加入好友</button>
+    </nav>
+    <div id="screen">
+      <section class="account"><div class="avatar" aria-hidden="true">K</div><div><div class="account-name">K爸測試官方帳號</div><div class="account-id">@kba-mock</div></div></section>
+      <div class="tags"><span>測試</span><span>不可兌換</span></div>
+      <section class="content">
+        <h2 class="title" id="coupon-title">K爸模擬 1｜可抽選</h2>
+        <div class="dates">有效期間　2026/09/24 00:00～2026/10/01 23:59</div>
+        <p class="notes">僅供測試畫面跳轉與按鈕流程。此頁不連接 LINE、不產生訂單或可兌換的優惠券。</p>
+        <div class="result" id="result" hidden></div>
+        <div class="more">其他優惠券</div>
+        <div class="coupon" aria-hidden="true"><div class="art">◇</div><div class="coupon-name">K爸模擬測試券</div><div class="coupon-foot">僅供畫面驗收</div></div>
+      </section>
+      <div class="fixed"><button class="action" id="draw" type="button">參加抽獎</button></div>
+    </div>
+  </main>
+  <script>
+    (() => {
+      const params = new URLSearchParams(location.search);
+      if (params.get('embed') === '1') document.body.classList.add('embed');
+      const allowed = new Set(['ready', 'already', 'win', 'expired', 'error', 'friend']);
+      const names = {ready:'K爸模擬 1｜可抽選', already:'K爸模擬 2｜已抽過', win:'K爸模擬 3｜中獎結果', expired:'K爸模擬 4｜已失效', error:'K爸模擬 5｜載入錯誤', friend:'K爸模擬 6｜加入好友'};
+      const title = document.getElementById('coupon-title');
+      const result = document.getElementById('result');
+      const draw = document.getElementById('draw');
+      let scenario = allowed.has(params.get('scenario')) ? params.get('scenario') : 'ready';
+      let drawn = false;
+      let friendAdded = false;
+      function render() {
+        document.querySelectorAll('[data-scenario]').forEach(button => button.classList.toggle('active', button.dataset.scenario === scenario));
+        title.textContent = names[scenario];
+        result.hidden = false;
+        result.classList.remove('win');
+        draw.disabled = true;
+        if (scenario === 'already') { result.textContent = '可惜...沒有抽中！已抽選'; draw.textContent = '已抽選'; }
+        else if (scenario === 'expired') { result.textContent = '優惠券已失效'; draw.textContent = '已失效'; }
+        else if (scenario === 'error') { result.textContent = '發生不明錯誤，請稍後再試'; draw.textContent = '無法抽選'; }
+        else if (scenario === 'friend' && !friendAdded) { result.textContent = '請先加入 K爸測試官方帳號好友'; draw.disabled = false; draw.textContent = '加入好友並參加抽獎'; }
+        else if (drawn) { result.textContent = scenario === 'win' ? '恭喜中獎！僅供展示，不能兌換' : '可惜...沒有抽中！'; result.classList.toggle('win', scenario === 'win'); draw.textContent = '已抽選'; }
+        else { result.hidden = true; draw.disabled = false; draw.textContent = '參加抽獎'; }
+      }
+      function chooseScenario(nextScenario) {
+        if (!allowed.has(nextScenario)) throw new Error('不支援的模擬情境');
+        scenario = nextScenario; drawn = false; friendAdded = false; render();
+        const next = new URL(location.href); next.searchParams.set('scenario', scenario); history.replaceState(null, '', next);
+      }
+      function completeMockDraw() {
+        if (draw.disabled) throw new Error('此情境無法抽選');
+        if (scenario === 'friend' && !friendAdded) { friendAdded = true; drawn = true; render(); return; }
+        drawn = true; render();
+      }
+      document.querySelectorAll('[data-scenario]').forEach(button => button.addEventListener('click', () => chooseScenario(button.dataset.scenario)));
+      draw.addEventListener('click', completeMockDraw);
+      if (document.modelContext?.registerTool && !document.body.classList.contains('embed')) {
+        try {
+          void Promise.resolve(document.modelContext.registerTool({
+            name: 'choose_mock_scenario', title: '切換模擬情境',
+            description: '切換可抽選、已抽過、中獎結果、已失效、載入錯誤或加入好友的可見模擬畫面。',
+            inputSchema: {type:'object', properties:{scenario:{type:'string', enum:['ready','already','win','expired','error','friend']}}, required:['scenario'], additionalProperties:false},
+            annotations: {readOnlyHint:false, untrustedContentHint:false},
+            execute(input) { chooseScenario(input.scenario); return {scenario, title:title.textContent}; }
+          })).catch(() => {});
+          void Promise.resolve(document.modelContext.registerTool({
+            name: 'complete_mock_draw', title: '按下模擬抽獎',
+            description: '僅按下本頁的模擬抽獎按鈕，不連接 LINE 或產生訂單。',
+            inputSchema: {type:'object', properties:{}, additionalProperties:false},
+            annotations: {readOnlyHint:false, untrustedContentHint:false},
+            execute() { completeMockDraw(); return {scenario, result:result.textContent}; }
+          })).catch(() => {});
+        } catch (_) { /* Older browsers simply use the visible controls. */ }
+      }
+      document.getElementById('close').addEventListener('click', () => {
+        if (window.KbBridge && typeof window.KbBridge.close === 'function') { window.KbBridge.close(); return; }
+        document.getElementById('screen').innerHTML = '<div class="closed"><h2>模擬頁面已關閉</h2><p>K爸測試，不會有真實訂單</p><button type="button" id="again">重新開啟</button></div>';
+        document.getElementById('again').addEventListener('click', () => location.reload());
+      });
+      render();
+    })();
+  </script>
+</body>
+</html>

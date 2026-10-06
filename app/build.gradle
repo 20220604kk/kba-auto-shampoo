@@ -1,0 +1,29 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'tw.linedraw.quick'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'tw.linedraw.quick'
+        minSdk 30
+        targetSdk 35
+        versionCode 13
+        versionName '0.2.9'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'org.jsoup:jsoup:1.18.3'
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+}

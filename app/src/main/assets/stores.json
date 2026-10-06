@@ -1,0 +1,470 @@
+[
+  {
+    "id": "來玩聚-斗六家樂福",
+    "city": "雲林縣",
+    "name": "斗六家樂福",
+    "brand": "來玩聚"
+  },
+  {
+    "id": "來玩聚-彰化家樂福",
+    "city": "彰化縣",
+    "name": "彰化家樂福",
+    "brand": "來玩聚"
+  },
+  {
+    "id": "來玩聚-員林大潤發",
+    "city": "彰化縣",
+    "name": "員林大潤發",
+    "brand": "來玩聚"
+  },
+  {
+    "id": "來玩聚-台南新仁家樂福",
+    "city": "台南市",
+    "name": "台南新仁家樂福",
+    "brand": "來玩聚"
+  },
+  {
+    "id": "來玩聚-新楠家樂福",
+    "city": "高雄市",
+    "name": "新楠家樂福",
+    "brand": "來玩聚"
+  },
+  {
+    "id": "來玩聚-楠梓家樂福",
+    "city": "高雄市",
+    "name": "楠梓家樂福",
+    "brand": "來玩聚"
+  },
+  {
+    "id": "來玩聚-新屏家樂福",
+    "city": "屏東縣",
+    "name": "新屏家樂福",
+    "brand": "來玩聚"
+  },
+  {
+    "id": "來玩聚-鳳山家樂福",
+    "city": "高雄市",
+    "name": "鳳山家樂福",
+    "brand": "來玩聚"
+  },
+  {
+    "id": "來玩聚-台東家樂福",
+    "city": "台東縣",
+    "name": "台東家樂福",
+    "brand": "來玩聚"
+  },
+  {
+    "id": "來玩聚-台北地下街16號",
+    "city": "台北市",
+    "name": "台北地下街16號",
+    "brand": "來玩聚"
+  },
+  {
+    "id": "funbox-台北忠孝遠東sogo",
+    "city": "台北市",
+    "name": "台北忠孝遠東SOGO",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-三越南西",
+    "city": "台北市",
+    "name": "三越南西",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-三越站前",
+    "city": "台北市",
+    "name": "三越站前",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-天母sogo",
+    "city": "台北市",
+    "name": "天母SOGO",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-高島屋百貨",
+    "city": "台北市",
+    "name": "高島屋百貨",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-比漾廣場",
+    "city": "新北市",
+    "name": "比漾廣場",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-桃園站前",
+    "city": "桃園市",
+    "name": "桃園站前",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-桃園遠東",
+    "city": "桃園市",
+    "name": "桃園遠東",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-信義新天地a8館",
+    "city": "台北市",
+    "name": "信義新天地A8館",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-新竹遠東",
+    "city": "新竹市",
+    "name": "新竹遠東",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-中壢sogo",
+    "city": "桃園市",
+    "name": "中壢SOGO",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-板橋遠東",
+    "city": "新北市",
+    "name": "板橋遠東",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-中和環球",
+    "city": "新北市",
+    "name": "中和環球",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-板橋大遠百",
+    "city": "新北市",
+    "name": "板橋大遠百",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-新竹巨城",
+    "city": "新竹市",
+    "name": "新竹巨城",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-美麗華",
+    "city": "台北市",
+    "name": "美麗華",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-中壢大江",
+    "city": "桃園市",
+    "name": "中壢大江",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-新月廣場",
+    "city": "宜蘭縣",
+    "name": "新月廣場",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-潤泰南港車站店",
+    "city": "台北市",
+    "name": "潤泰南港車站店",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-苗栗尚順",
+    "city": "苗栗縣",
+    "name": "苗栗尚順",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-汐科遠雄",
+    "city": "新北市",
+    "name": "汐科遠雄",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-桃園環球a8",
+    "city": "桃園市",
+    "name": "桃園環球A8",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-新竹遠雄湳雅",
+    "city": "新竹市",
+    "name": "新竹遠雄湳雅",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-樹林秀泰",
+    "city": "新北市",
+    "name": "樹林秀泰",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-淡水禮萊廣場",
+    "city": "新北市",
+    "name": "淡水禮萊廣場",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-天母三越",
+    "city": "台北市",
+    "name": "天母三越",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-遠百信義a13",
+    "city": "台北市",
+    "name": "遠百信義A13",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-台茂購物中心",
+    "city": "桃園市",
+    "name": "台茂購物中心",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-宏匯廣場",
+    "city": "新北市",
+    "name": "宏匯廣場",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-桃園環球a19",
+    "city": "桃園市",
+    "name": "桃園環球A19",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-竹北遠東",
+    "city": "新竹縣",
+    "name": "竹北遠東",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-新竹享平方",
+    "city": "新竹縣",
+    "name": "新竹享平方",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-新店裕隆城",
+    "city": "新北市",
+    "name": "新店裕隆城",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-南港lalaport",
+    "city": "台北市",
+    "name": "南港LaLaport",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-遠東大巨蛋",
+    "city": "台北市",
+    "name": "遠東大巨蛋",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-台中中友",
+    "city": "台中市",
+    "name": "台中中友",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-豐原太平洋",
+    "city": "台中市",
+    "name": "豐原太平洋",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-台中遠東",
+    "city": "台中市",
+    "name": "台中遠東",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-廣三sogo",
+    "city": "台中市",
+    "name": "廣三SOGO",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-台中三越",
+    "city": "台中市",
+    "name": "台中三越",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-嘉義遠東",
+    "city": "嘉義市",
+    "name": "嘉義遠東",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-嘉義耐斯",
+    "city": "嘉義市",
+    "name": "嘉義耐斯",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-嘉義三越",
+    "city": "嘉義市",
+    "name": "嘉義三越",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-台中新時代",
+    "city": "台中市",
+    "name": "台中新時代",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-文心秀泰",
+    "city": "台中市",
+    "name": "文心秀泰",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-麗寶一期",
+    "city": "台中市",
+    "name": "麗寶一期",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-台中港三井",
+    "city": "台中市",
+    "name": "台中港三井",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-台中lalaport",
+    "city": "台中市",
+    "name": "台中Lalaport",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-台中漢神洲際",
+    "city": "台中市",
+    "name": "台中漢神洲際",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-高雄漢神",
+    "city": "高雄市",
+    "name": "高雄漢神",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-崇光高雄",
+    "city": "高雄市",
+    "name": "崇光高雄",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-屏東太平洋",
+    "city": "屏東縣",
+    "name": "屏東太平洋",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-台南遠百",
+    "city": "台南市",
+    "name": "台南遠百",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-高雄大遠百",
+    "city": "高雄市",
+    "name": "高雄大遠百",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-台南西門",
+    "city": "台南市",
+    "name": "台南西門",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-漢神巨蛋",
+    "city": "高雄市",
+    "name": "漢神巨蛋",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-高雄左營",
+    "city": "高雄市",
+    "name": "高雄左營",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-夢時代二館",
+    "city": "高雄市",
+    "name": "夢時代二館",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-屏東環球",
+    "city": "屏東縣",
+    "name": "屏東環球",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-南紡購物中心",
+    "city": "台南市",
+    "name": "南紡購物中心",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-澎坊商場",
+    "city": "澎湖縣",
+    "name": "澎坊商場",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-高雄大立",
+    "city": "高雄市",
+    "name": "高雄大立",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-義大二館",
+    "city": "高雄市",
+    "name": "義大二館",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-義享天地",
+    "city": "高雄市",
+    "name": "義享天地",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-大魯閣新光",
+    "city": "高雄市",
+    "name": "大魯閣新光",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-台南三井",
+    "city": "台南市",
+    "name": "台南三井",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-花蓮遠東",
+    "city": "花蓮縣",
+    "name": "花蓮遠東",
+    "brand": "Funbox"
+  },
+  {
+    "id": "funbox-台東秀泰",
+    "city": "台東縣",
+    "name": "台東秀泰",
+    "brand": "Funbox"
+  }
+]
