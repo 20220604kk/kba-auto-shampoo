@@ -14,5 +14,9 @@ public final class CouponPageSignalsSelfTest {
             throw new AssertionError("LINE 分段顯示的已結束頁必須被辨識");
         if (CouponPageSignals.isEnded("參加抽獎"))
             throw new AssertionError("可抽頁不可誤判結束");
+        if (!CouponPageSignals.isBusy("系統忙碌中 很抱歉，請稍後再開啟此頁面。"))
+            throw new AssertionError("系統忙碌頁必須被辨識");
+        if (CouponPageSignals.isBusy("參加抽獎"))
+            throw new AssertionError("可抽頁不可誤判系統忙碌");
     }
 }

@@ -1,90 +1,85 @@
-# 方爸全自動洗頭機
+# K爸全自動洗頭機
 
-一款協助整理每週 LINE 抽選任務的 Android 工具。這個倉庫保存並開源 **v0.2.9**：可同步公開清單、依縣市／品項／時間篩選、安排抽選順序，並透過 Android 輔助服務依序開啟 LINE 連結。
+協助整理每週 LINE 抽選任務的 Android 工具：同步公開清單、依縣市／品項／時間篩選、安排順序，透過輔助服務開啟 LINE 連結並記錄結果。
 
-> 這是歷史封存版本。應用程式後續曾更名為「K爸全自動洗頭機」，但本倉庫保留 v0.2.9 當時的名稱、介面與行為。
+**目前發行基準：v0.4.2a（versionCode 22）。** `main` 已由歷史 v0.2.9 更新到指定 v0.4.2a APK 的對應原始碼；原本 v0.2.9 保留在既有標籤。
 
-## 主要功能
+- [下載 v0.4.2a APK](https://github.com/20220604kk/kba-auto-shampoo/releases/tag/v0.4.2a)
+- [家用端接手說明與待辦](docs/HANDOFF.md)
+- [版本還原與驗證](docs/V0.4.2a_VERIFICATION.md)
+- [更新紀錄](CHANGELOG.md)
 
-- 同步公開的每週抽選清單。
-- 依縣市、品項與開抽時間複選篩選。
-- 設定「先縣市／先品項」及自訂優先順序。
-- 批次選取待抽項目，逐筆交給 LINE 開啟。
-- 懸浮進度列、暫停與停止控制。
-- 將結果分成中獎、未中、已結束、待抽與需確認。
-- 私人 LINE 測試連結與內建離線模擬驗收。
-- 權限健檢、低階手機模式、掃描報告與清除本週資料。
+尚未正式發行的 v0.4.3 原始碼保存在 `development/v0.4.3` 分支。請先讀交接文件，依目的選擇發行基準或後續開發進度。
 
-程式的安全原則是：**不會自動點擊「使用優惠券」**。中獎後的兌換仍由使用者自行確認與操作。
+## 已實作功能
 
-## 系統需求
+- 公開抽選清單同步，以及新增、下架、時間變更和未變動摘要。
+- 縣市、品項、開抽時間篩選，自訂縣市／品項優先順序。
+- 最多三組具名喜好方案、任務選取、中斷後續跑提示。
+- 開抽前權限健檢、懸浮進度、暫停／繼續／停止與 LINE 直式鎖定。
+- 快速／平衡／相容速度模式、LINE 間直接交接與低階裝置模式。
+- 中獎、未中、未抽、未開賣、未加好友、已結束與需確認等結果分類。
+- 正式與測試紀錄分開保存、最近掃描報告、離線模擬測試。
+- 舊版 JSON 簽章 KBA 與新版 KBA2 二進位卡；可從開啟或分享檔案直接匯入。
 
-- Android 11（API 30）以上。
-- 已安裝 LINE。
-- 執行自動流程時需授權：
-  - 顯示在其他應用程式上層。
-  - Android 輔助服務。
-  - 修改系統設定（用於執行期間的畫面／方向控制）。
+同步公開清單與正式抽選都需要有效 KBA；測試功能不需要。APP 僅包含驗證公鑰，發卡後台與私鑰不在此倉庫。v0.4.2a 尚未包含 APP 內線上更新器。
 
-## 使用方式
+程式不自動點擊「使用優惠券」；兌換由使用者自行確認。
 
-1. 安裝並開啟 APP，依首次教學完成權限設定。
-2. 按右上角「同步」取得當週公開清單。
-3. 選擇縣市、品項、抽選順序與時間。
-4. 勾選要執行的任務，再按「開始連抽」。
-5. 執行期間可從懸浮進度列查看狀態、暫停或停止。
-6. 回到「結果」查看掃描分類；有疑問的項目會保留在「需確認」。
+## 使用需求
 
-建議先到測試頁完成離線模擬驗收，再操作正式連結。
+- Android 9（API 28）以上，已安裝並登入 LINE。
+- 自動流程需開啟輔助服務、顯示在其他 APP 上層及修改系統設定。
+- 匯入有效 KBA 後，同步清單、篩選、選取任務，再開始抽選。建議先完成測試頁的離線模擬。
 
-## 從原始碼建置
+## 建置與檢查
 
-需要 JDK 17 與 Android SDK 35。倉庫附有 Gradle Wrapper。
+需要 JDK 17、Android SDK Platform 35 及 Build Tools 35.0.0。設定 `JAVA_HOME` 和 `ANDROID_HOME`；也可透過 Android Studio 設定 SDK。倉庫附有 Gradle 8.13 Wrapper。
 
-Windows：
+Windows PowerShell：
 
 ```powershell
-.\gradlew.bat testDebugUnitTest lintDebug assembleDebug
+.\gradlew.bat testDebugUnitTest lintDebug assembleDebug assembleRelease
+.\scripts\test-rules.ps1
 ```
 
 macOS／Linux：
 
 ```bash
-./gradlew testDebugUnitTest lintDebug assembleDebug
+./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease
+# 規則自測可使用 PowerShell 7：
+pwsh ./scripts/test-rules.ps1
 ```
 
-建置完成的 APK 位於：
+`testDebugUnitTest` 不會執行本專案以 `main()` 撰寫的自測；`test-rules.ps1` 才會實際執行全部 14 組規則測試，CI 也會執行。
+
+輸出：
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
+app/build/outputs/apk/release/app-release-unsigned.apk
 ```
 
-## 專案結構
+Release 建置預設未簽章。自行建置的 debug APK 使用本機 debug 憑證，不保證能覆蓋已發行版；覆蓋更新必須沿用原簽章。原始 v0.4.2a 已簽章 APK 放在 GitHub Release，不提交到 Git 原始碼歷史。
 
-```text
-app/src/main/java/tw/linedraw/quick/  主要程式
-app/src/main/res/                     圖示、啟動畫面與服務設定
-app/src/main/assets/                  離線模擬頁及資料
-app/src/test/                         純 Java 自我測試
-```
+## 程式結構
 
-## 隱私與安全
+| 位置 | 職責 |
+|---|---|
+| `MainActivity.java` | 原生 Java 主介面、篩選、喜好方案、權限與 KBA 匯入 |
+| `DrawData.java` / `DrawItem.java` | 公開清單解析、SharedPreferences、選取與結果 |
+| `DrawAccessibilityService.java` | LINE 自動操作、佇列、懸浮控制與掃描 |
+| `VisualCouponReader.java` | 畫面辨識及 ML Kit 中文 OCR |
+| `CouponSafety.java` / `CouponPageSignals.java` | 可操作按鈕與頁面狀態規則 |
+| `WeeklyLicense.java` / `res/raw/license_public.pem` | KBA／KBA2 解碼與 ECDSA、時間及版本驗證 |
+| `SyncDiff.java` / `HandoffPolicy.java` / `WaitPolicy.java` | 同步摘要、直接交接與速度規則 |
+| `assets/mock_coupon.html` / `MockCouponActivity.java` | 內建模擬頁與離線驗收 |
+| `app/src/test/` | 14 組無裝置規則自測 |
 
-- 專案沒有廣告 SDK、分析 SDK、Discord Token、KBA 私鑰或發行簽章檔。
-- 設定與執行結果保存在裝置本機。
-- 同步時會連線到程式碼中標示的公開資料來源；抽選連結會交由 LINE 開啟。
-- 輔助服務具備讀取與操作畫面的高權限，請先閱讀原始碼，只安裝你自己信任的建置版本。
+## 隱私與授權
 
-## 版本驗證
+設定與結果存於裝置本機；同步來源為程式中標示的公開網站。倉庫不包含 Discord Token、KBA 私鑰、有效認證卡或 APK 簽章私鑰。輔助服務可讀取並操作畫面，請只安裝可信任的版本。
 
-本倉庫的 Java 原始碼由 v0.2.9 開發紀錄還原，並與已發布 APK 交叉驗證：重新建置後的 Manifest、資源表、圖像資產完全一致，兩份 APK 經 JADX 產生的應用程式 Java 程式碼逐檔雜湊也完全一致。
+本工具與 LINE、Funbox 及清單來源作者沒有隸屬或代言關係。第三方頁面變動可能影響操作，請依各平台規範使用。
 
-正式封存 APK 會附在 GitHub Releases；請以 Release 頁標示的 SHA-256 核對檔案。
-
-## 聲明
-
-本專案是非官方社群工具，與 LINE、Funbox 及清單資料來源的作者沒有隸屬、授權或代言關係。使用者應自行遵守各平台規範並承擔自動化操作風險。清單內容、抽選頁面或第三方服務變更時，舊版可能無法正常運作。
-
-## 授權
-
-程式碼與本倉庫自有素材採用 [MIT License](LICENSE)。第三方套件仍依各自授權條款提供。
+程式碼與自有素材採用 [MIT License](LICENSE)，第三方套件各依原授權。

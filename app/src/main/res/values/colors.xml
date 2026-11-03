@@ -2,4 +2,5 @@
 <resources>
     <color name="brand_navy">#17305B</color>
     <color name="brand_mint">#E3F8EA</color>
+    <color name="brand_warm">#F8F5EF</color>
 </resources>

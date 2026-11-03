@@ -2,6 +2,7 @@ package tw.linedraw.quick;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
@@ -18,6 +19,8 @@ final class ProductCatalog {
         String category = RunScope.productCategory(item);
         Matcher code = CODE.matcher(item.product);
         if (!code.find()) return item.product.trim();
+        String baseCode = code.group(1).toUpperCase(Locale.ROOT) + "-" + code.group(2);
+        if (!category.equals(baseCode)) return category;
         String suffix = item.product.substring(code.end()).trim().replaceFirst("^[.．:：·・_－-]+", "").trim();
         suffix = PRICE.matcher(suffix).replaceFirst("").trim();
         suffix = suffix.replaceAll("\\s+", " ");

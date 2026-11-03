@@ -15,18 +15,28 @@ final class RunScope {
 
     static String productCategory(DrawItem item) {
         Matcher match = PRODUCT_CODE.matcher(item.product);
-        return match.find() ? match.group(1).toUpperCase(Locale.ROOT) + "-" + match.group(2) : item.product;
+        if (!match.find()) return item.product;
+        String code = match.group(1).toUpperCase(Locale.ROOT) + "-" + match.group(2);
+        // CX-00 currently contains two unrelated products. Treating the model code as
+        // the category would make selecting one silently include the other.
+        if (code.equals("CX-00")) {
+            String compact = item.product.replaceAll("\\s+", "");
+            if (compact.contains("迪卡狂怒")) return "CX-00 迪卡狂怒";
+            if (compact.contains("新世紀福音戰士")) return "CX-00 新世紀福音戰士改造組";
+        }
+        return code;
     }
 
     static boolean eligible(DrawItem item) {
         return item.status.equals("pending") || item.status.equals("scheduled") ||
-                item.status.equals("not_friend") || item.status.equals("error");
+                item.status.equals("not_friend") || item.status.equals("busy") ||
+                item.status.equals("error");
     }
 
-    // Uncertain/error items can be opted into individually, never by bulk selection.
+    // Every item shown in the draw tab is actionable. A store or current-scope
+    // selection must never silently omit the retryable items the user can see.
     static boolean bulkSelectable(DrawItem item) {
-        return item.status.equals("pending") || item.status.equals("scheduled") ||
-                item.status.equals("not_friend");
+        return eligible(item);
     }
 
     static boolean modeMatches(DrawItem item, String mode) {

@@ -8,6 +8,11 @@ public final class DrawTimeFilterSelfTest {
     public static void main(String[] args) {
         expect(DrawTimeFilter.openingTime("抽選/購買時間：2026/09/24 11:00~2026/09/25 21:00"), "11:00");
         expect(DrawTimeFilter.openingTime("抽選開放：2026/09/24 10:30｜購買資格券有效至 21:00"), "10:30");
+        expect(DrawTimeFilter.openingTime("抽選開放：2026/09/24 10:00"), "10:00");
+        expect(DrawTimeFilter.openingTime("抽選開放：2026/09/24 12:00"), "12:00");
+        expect(DrawTimeFilter.openingTime("即日起至 2026/09/25 21:00"), "未標時間");
+        expect(DrawTimeFilter.openingTime("抽選開放：2026/09/24 11:11"), "未標時間");
+        expect(DrawTimeFilter.openingTime("抽選開放：2026/09/24 21:00"), "未標時間");
         expect(DrawTimeFilter.openingTime("抽選/購買日期：2026/09/24~2026/09/25（原文未註明時間）"), "未標時間");
         expect(DrawTimeFilter.openingTime(""), "未標時間");
         System.out.println("DrawTimeFilterSelfTest passed");

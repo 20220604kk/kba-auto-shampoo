@@ -4,6 +4,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.provider.Settings;
+import android.os.Build;
 
 final class PermissionHealth {
     private PermissionHealth() {}
@@ -36,12 +37,14 @@ final class PermissionHealth {
     static String fullStatus(Context context) {
         String service = DrawAccessibilityService.available() ? "已連線，可執行" :
                 accessibilityEnabled(context) ? "已啟用但尚未連線（通常是系統中止服務）" : "未啟用";
+        String restricted = Build.VERSION.SDK_INT >= 33 ?
+                "\nAndroid 13 以上若顯示「受限制的設定」，請到 APP 資訊右上角選單允許受限制的設定。" : "";
         return "輔助使用服務：" + service + "\n" +
                 "LINE：" + (lineInstalled(context) ? "已安裝" : "未偵測到原生 LINE") + "\n" +
                 "浮動進度列：" + (Settings.canDrawOverlays(context) ? "已授權" : "未授權；仍會嘗試輔助服務浮窗") + "\n" +
                 "LINE 直式鎖定：" + (OrientationGuard.canLock(context) ? "已授權" : "未授權") + "\n\n" +
                 "這不是缺少套件。Android／模擬器可能在更新 APP、省電、清理背景或分身切換後停止輔助服務；" +
                 "系統不允許 APP 自行重新開啟這項高權限。建議把本 APP 的電池使用設為「不限制」，並允許自動啟動；" +
-                "若顯示已啟用但未連線，請到輔助使用設定將本服務關閉再開啟一次。";
+                "若顯示已啟用但未連線，請到輔助使用設定將本服務關閉再開啟一次。" + restricted;
     }
 }

@@ -2,25 +2,31 @@ package tw.linedraw.quick;
 
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
+import android.content.Context;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.hardware.display.DisplayManager;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Build;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.Log;
 import android.util.SparseArray;
 import android.view.Gravity;
+import android.view.Display;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityWindowInfo;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -32,6 +38,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class DrawAccessibilityService extends AccessibilityService {
     private static final String TAG = "LineDrawTest";
@@ -39,13 +47,16 @@ public final class DrawAccessibilityService extends AccessibilityService {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ArrayList<DrawItem> queue = new ArrayList<>();
     private WindowManager windowManager;
+    private Context overlayContext;
     private View overlay;
     private TextView overlayText;
     private TextView overlayItem;
     private TextView overlayMeta;
-    private ProgressBar progressIcon;
+    private ImageView progressIcon;
     private ProgressBar progressLine;
     private Button pauseButton;
+    private int overlayDisplayId = Display.INVALID_DISPLAY;
+    private int targetDisplayId = Display.DEFAULT_DISPLAY;
     private int index;
     private int processedCount;
     private boolean running;
@@ -53,6 +64,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
     private boolean finishing;
     private boolean verifiedCurrent;
     private boolean friendJoinAttempted;
+    private int friendJoinAttempts;
     private boolean reviewMode;
     private boolean manualCheck;
     private boolean gestureAttempted;
@@ -70,13 +82,21 @@ public final class DrawAccessibilityService extends AccessibilityService {
     private int reviewNotDrawn;
     private int reviewNotFriend;
     private int reviewScheduled;
+    private int reviewBusy;
     private int reviewUncertain;
     private int reviewEnded;
-    private int reviewMismatches;
     private final ArrayList<String> reviewWinners = new ArrayList<>();
     private final ArrayList<String> reviewProblems = new ArrayList<>();
     private final Map<String, String> reviewOutcomes = new HashMap<>();
+    private final Map<String, String> resolvedTargets = new ConcurrentHashMap<>();
+    private final Set<String> resolvingTargets = ConcurrentHashMap.newKeySet();
+    private int requestedStartDisplayId = Display.INVALID_DISPLAY;
     private String previousCouponText = "";
+    private String lastVisualPageText = "";
+    private boolean fastHandoffEnabled;
+    private boolean fastHandoffPending;
+    private boolean inspectScheduled;
+    private int consecutiveHandoffFailures;
     private String stage = "idle";
     private long stageAt;
     private long lastInspectLogAt;
@@ -98,6 +118,66 @@ public final class DrawAccessibilityService extends AccessibilityService {
 
     static boolean available() { return instance != null; }
     static boolean isRunning() { return instance != null && instance.running; }
+    static boolean hasPersistentOverlay() {
+        return instance != null && instance.running && instance.overlay != null &&
+                instance.overlay.getVisibility() == View.VISIBLE;
+    }
+
+    static void preferDisplay(int displayId) {
+        DrawAccessibilityService service = instance;
+        if (service != null && displayId != Display.INVALID_DISPLAY)
+            service.requestedStartDisplayId = displayId;
+    }
+
+    static final class RunUiSnapshot {
+        final boolean running;
+        final boolean paused;
+        final int current;
+        final int total;
+        final int processed;
+        final String product;
+        final String phase;
+        final String status;
+        final long remainingMs;
+        final long elapsedMs;
+        final double averageSeconds;
+
+        RunUiSnapshot(boolean running, boolean paused, int current, int total, int processed,
+                      String product, String phase, String status, long remainingMs,
+                      long elapsedMs, double averageSeconds) {
+            this.running = running;
+            this.paused = paused;
+            this.current = current;
+            this.total = total;
+            this.processed = processed;
+            this.product = product;
+            this.phase = phase;
+            this.status = status;
+            this.remainingMs = remainingMs;
+            this.elapsedMs = elapsedMs;
+            this.averageSeconds = averageSeconds;
+        }
+    }
+
+    static RunUiSnapshot uiSnapshot() {
+        DrawAccessibilityService service = instance;
+        return service == null ? new RunUiSnapshot(false, false, 0, 0, 0,
+                "", "", "", 0, 0, 0) : service.buildUiSnapshot();
+    }
+
+    static void togglePauseCurrent() {
+        if (instance != null) instance.togglePauseRun();
+    }
+
+    static void setHostAppForeground(boolean foreground) {
+        DrawAccessibilityService service = instance;
+        if (service == null) return;
+        service.handler.post(() -> {
+            // v0.3.2 uses one persistent console above both the app and LINE.
+            if (service.running && service.overlay != null)
+                service.overlay.setVisibility(View.VISIBLE);
+        });
+    }
 
     static boolean begin(ArrayList<DrawItem> items) {
         if (instance == null || instance.running || items.isEmpty()) return false;
@@ -128,7 +208,57 @@ public final class DrawAccessibilityService extends AccessibilityService {
     }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
-        if (running && !paused && !handler.hasCallbacks(inspectRunnable)) handler.postDelayed(inspectRunnable, 220);
+        if (running && event != null) {
+            if (isRunSurface(event.getPackageName()) &&
+                    event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+                    Build.VERSION.SDK_INT >= 30) {
+                // AccessibilityRecord#getDisplayId exists only on Android 13.
+                // Calling it on Android 11/12 crashed the whole accessibility service.
+                int displayId = Build.VERSION.SDK_INT >= 33 ? event.getDisplayId() : detectRunDisplay();
+                if (displayId != Display.INVALID_DISPLAY && displayId != targetDisplayId &&
+                        activePackageOnDisplay(displayId, event.getPackageName())) {
+                    targetDisplayId = displayId;
+                    moveOverlayToDisplay(displayId);
+                }
+            }
+        }
+        if (running && !paused) scheduleInspect(220);
+    }
+
+    private boolean isRunSurface(CharSequence packageName) {
+        if (packageName == null) return false;
+        String value = packageName.toString();
+        return value.equals("jp.naver.line.android") || value.equals(getPackageName());
+    }
+
+    private boolean activePackageOnDisplay(int displayId, CharSequence packageName) {
+        if (packageName == null) return false;
+        if (Build.VERSION.SDK_INT < 30) return displayId == Display.DEFAULT_DISPLAY;
+        try {
+            SparseArray<List<AccessibilityWindowInfo>> all = getWindowsOnAllDisplays();
+            List<AccessibilityWindowInfo> windows = all.get(displayId);
+            if (windows == null) return false;
+            for (AccessibilityWindowInfo info : windows) {
+                if (info == null || (!info.isActive() && !info.isFocused())) continue;
+                AccessibilityNodeInfo root = info.getRoot();
+                if (root == null) continue;
+                try {
+                    CharSequence activePackage = root.getPackageName();
+                    if (activePackage != null && packageName.toString().contentEquals(activePackage)) return true;
+                } finally { root.recycle(); }
+            }
+        } catch (Exception error) {
+            Log.w(TAG, "unable to verify active display " + displayId, error);
+        }
+        return false;
+    }
+
+    private GradientDrawable overlayBackground(int color, int stroke, float radius) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(dp(radius));
+        if (stroke != android.graphics.Color.TRANSPARENT) drawable.setStroke(dp(1), stroke);
+        return drawable;
     }
 
     @Override public void onInterrupt() { pauseRun(); }
@@ -145,12 +275,15 @@ public final class DrawAccessibilityService extends AccessibilityService {
         reviewMode = readOnly;
         manualCheck = singleManualCheck;
         reviewWins = reviewLosses = reviewNotDrawn = reviewNotFriend = reviewScheduled =
-                reviewUncertain = reviewMismatches = reviewEnded = 0;
+                reviewBusy = reviewUncertain = reviewEnded = 0;
         reviewWinners.clear();
         reviewProblems.clear();
         reviewOutcomes.clear();
-        if (singleManualCheck) reviewOutcomes.putAll(DrawData.loadReviewOutcomes(this));
-        else if (readOnly) DrawData.saveReviewOutcomes(this, reviewOutcomes);
+        resolvedTargets.clear();
+        resolvingTargets.clear();
+        // A one-link or one-store review must not erase conclusions collected for
+        // the rest of the week. Each checked link replaces only its own outcome.
+        if (readOnly) reviewOutcomes.putAll(DrawData.loadReviewOutcomes(this));
         index = 0;
         processedCount = 0;
         pausedTotalMs = 0;
@@ -158,9 +291,35 @@ public final class DrawAccessibilityService extends AccessibilityService {
         running = true;
         paused = false;
         finishing = false;
+        fastHandoffEnabled = DrawData.fastHandoff(this);
+        fastHandoffPending = false;
+        consecutiveHandoffFailures = 0;
+        lastVisualPageText = "";
         if (!OrientationGuard.lock(this)) Log.w(TAG, "device portrait lock unavailable; app itself remains portrait");
         showOverlay();
         handler.post(overlayTick);
+        prepareHostThenOpen();
+    }
+
+    private void prepareHostThenOpen() {
+        DrawItem first = current();
+        if (first == null || first.origin.equals("mock")) {
+            openCurrent();
+            return;
+        }
+        prefetchTarget(0);
+        try {
+            Intent lineHome = getPackageManager().getLaunchIntentForPackage("jp.naver.line.android");
+            if (lineHome != null) {
+                lineHome.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT |
+                        Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+                startActivity(lineHome);
+                handler.postDelayed(this::openCurrent, 320L);
+                return;
+            }
+        } catch (Exception error) {
+            Log.w(TAG, "unable to prime LINE task", error);
+        }
         openCurrent();
     }
 
@@ -174,6 +333,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
         finishing = false;
         verifiedCurrent = false;
         friendJoinAttempted = false;
+        friendJoinAttempts = 0;
         gestureAttempted = false;
         linkLaunched = false;
         visualInFlight = false;
@@ -182,52 +342,82 @@ public final class DrawAccessibilityService extends AccessibilityService {
         visualTransitionCount = 0;
         pendingDrawLabel = "";
         AccessibilityNodeInfo previous = couponRoot();
-        previousCouponText = previous == null ? "" : normalized(collectText(previous, new StringBuilder(), 0).toString());
+        previousCouponText = previous == null ? (fastHandoffPending ? lastVisualPageText : "") :
+                normalized(collectText(previous, new StringBuilder(), 0).toString());
         if (previous != null) previous.recycle();
-        if (!reviewMode) {
-            item.status = "error";
-            item.selected = false;
-            if (!item.origin.equals("mock")) DrawData.updateItem(this, item);
-        }
+        // Opening a link is not evidence of an error. Preserve its last known state
+        // until this visit produces a concrete result.
         Log.i(TAG, (reviewMode ? "review" : "open") + " item " + (index + 1) + "/" + queue.size());
         updateOverlay((reviewMode ? "只讀重掃「" : "開啟「") + item.product + "」");
         if (item.origin.equals("mock")) {
             Intent mock = new Intent(this, MockCouponActivity.class);
-            mock.putExtra("scenario", item.url.substring("mock://".length()));
-            mock.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            mock.putExtra("scenario", MockCatalog.scenarioFromUrl(item.url));
+            mock.putExtra("product", item.product);
+            mock.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP |
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP);
             startActivity(mock);
             linkLaunched = true;
             stageAt = System.currentTimeMillis();
-            handler.postDelayed(inspectRunnable, 650);
+            scheduleInspect(650);
             return;
         }
         launchCurrentLink(item);
     }
 
     private void launchCurrentLink(DrawItem item) {
+        String cacheKey = item.url.split("#", 2)[0];
+        String cached = resolvedTargets.get(cacheKey);
+        if (cached != null) {
+            launchResolvedTarget(item, cached);
+            return;
+        }
+        if (!resolvingTargets.add(cacheKey)) {
+            handler.postDelayed(() -> launchCurrentLink(item), 80L);
+            return;
+        }
         new Thread(() -> {
-            String target = resolveLiff(item.url);
-            handler.post(() -> {
-                if (!running || current() != item) return;
-                try {
-                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(target));
-                    intent.setPackage("jp.naver.line.android");
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(intent);
-                    linkLaunched = true;
-                    stageAt = System.currentTimeMillis();
-                } catch (Exception first) {
-                    try {
-                        Intent browser = new Intent(Intent.ACTION_VIEW, Uri.parse(item.url));
-                        browser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                        startActivity(browser);
-                        linkLaunched = true;
-                        stageAt = System.currentTimeMillis();
-                    } catch (Exception second) { finishItem("error", "連結無法開啟"); }
-                }
-                if (!handler.hasCallbacks(inspectRunnable)) handler.postDelayed(inspectRunnable, 650);
-            });
+            String target = resolveLiff(cacheKey);
+            resolvedTargets.put(cacheKey, target);
+            resolvingTargets.remove(cacheKey);
+            handler.post(() -> launchResolvedTarget(item, target));
         }, "linedraw-resolve").start();
+    }
+
+    private void launchResolvedTarget(DrawItem item, String target) {
+        if (!running || current() != item) return;
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(target));
+            intent.setPackage("jp.naver.line.android");
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK |
+                    (fastHandoffPending ? Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            : Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+            startActivity(intent);
+            linkLaunched = true;
+            stageAt = System.currentTimeMillis();
+            prefetchTarget(index + 1);
+        } catch (Exception first) {
+            try {
+                Intent browser = new Intent(Intent.ACTION_VIEW, Uri.parse(item.url));
+                browser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(browser);
+                linkLaunched = true;
+                stageAt = System.currentTimeMillis();
+                prefetchTarget(index + 1);
+            } catch (Exception second) { finishItem("error", "連結無法開啟"); }
+        }
+        scheduleInspect(650);
+    }
+
+    private void prefetchTarget(int position) {
+        if (position < 0 || position >= queue.size()) return;
+        DrawItem item = queue.get(position);
+        String cacheKey = item.url.split("#", 2)[0];
+        if (item.origin.equals("mock") || !DrawData.validLink(item.url) ||
+                resolvedTargets.containsKey(cacheKey) || !resolvingTargets.add(cacheKey)) return;
+        new Thread(() -> {
+            try { resolvedTargets.put(cacheKey, resolveLiff(cacheKey)); }
+            finally { resolvingTargets.remove(cacheKey); }
+        }, "linedraw-prefetch-" + position).start();
     }
 
     private String resolveLiff(String shortUrl) {
@@ -248,17 +438,35 @@ public final class DrawAccessibilityService extends AccessibilityService {
 
     private final Runnable inspectRunnable = new Runnable() {
         @Override public void run() {
-            if (!running || paused || finishing || stage.equals("closing") || current() == null) return;
+            inspectScheduled = false;
+            if (!running || paused || finishing || stage.equals("handoff") || stage.equals("closing") ||
+                    stage.equals("recovering") || current() == null) return;
             inspect();
-            if (running && !paused && !finishing) handler.postDelayed(this, reviewMode ? 240 : 600);
+            if (running && !paused && !finishing) scheduleInspect(reviewMode ? 240 : 600);
         }
     };
 
+    private void scheduleInspect(long delayMs) {
+        if (inspectScheduled) return;
+        inspectScheduled = true;
+        handler.postDelayed(inspectRunnable, Math.max(0L, delayMs));
+    }
+
+    private void cancelInspect() {
+        inspectScheduled = false;
+        handler.removeCallbacks(inspectRunnable);
+    }
+
     private void inspect() {
-        if (stage.equals("submitted") || stage.equals("joining")) return;
+        if (stage.equals("submitted") || stage.equals("joining") || stage.equals("recovering")) return;
         if (stage.equals("opening") && !linkLaunched) return;
         if (stage.equals("confirming")) { confirmSubmission(); return; }
-        if (System.currentTimeMillis() - stageAt > (reviewMode ? 10000 : 20000)) {
+        if (stage.equals("opening") && fastHandoffPending &&
+                System.currentTimeMillis() - stageAt > HandoffPolicy.TRANSITION_TIMEOUT_MS) {
+            recoverFastHandoff();
+            return;
+        }
+        if (System.currentTimeMillis() - stageAt > openingTimeoutMs()) {
             closeAndFinish(reviewMode ? "unknown" : "error", "等待畫面逾時・未確認");
             return;
         }
@@ -279,6 +487,12 @@ public final class DrawAccessibilityService extends AccessibilityService {
             String packageName = root.getPackageName() == null ? "" : root.getPackageName().toString();
             String text = collectText(root, new StringBuilder(), 0).toString();
             String primaryText = text.split("其他優惠券", 2)[0];
+            if (fastHandoffPending) {
+                if (normalized(text).equals(previousCouponText)) return;
+                fastHandoffPending = false;
+                consecutiveHandoffFailures = 0;
+                updateOverlay("下一筆已載入");
+            }
             logInspect("package=" + packageName + " draw=" + primaryText.contains("參加抽獎") + " processed=" + hasProcessedText(primaryText));
             boolean line = packageName.equals("jp.naver.line.android") ||
                     (item != null && item.origin.equals("mock") && packageName.equals(getPackageName()));
@@ -298,6 +512,10 @@ public final class DrawAccessibilityService extends AccessibilityService {
                 if (!outcome.isEmpty()) closeAndFinish(outcome, "只讀檢查：" + outcome);
                 return;
             }
+            if (CouponPageSignals.isBusy(primaryText)) {
+                closeAndFinish("busy", "LINE 系統忙碌・保留稍後重試");
+                return;
+            }
             if (CouponPageSignals.isEnded(primaryText) &&
                     !normalized(text).equals(previousCouponText) &&
                     System.currentTimeMillis() - stageAt >= 1200) {
@@ -307,8 +525,8 @@ public final class DrawAccessibilityService extends AccessibilityService {
             if (item != null && !verifiedCurrent) {
                 if (item.origin.equals("mock")) {
                     if (!text.contains("K爸測試，不會有真實訂單") || !text.contains(item.product)) return;
-                } else if (item.origin.equals("test") && item.product.startsWith("方爸測試 ")) {
-                    if (!matchesTestCoupon(text, item.product)) return;
+                } else if (TestCatalog.isDefault(item)) {
+                    if (!matchesTestCoupon(text, item)) return;
                 } else if ((!text.contains("有效期間") && !text.contains("參加抽獎")) ||
                         normalized(text).equals(previousCouponText)) return;
                 verifiedCurrent = true;
@@ -349,13 +567,16 @@ public final class DrawAccessibilityService extends AccessibilityService {
         if (mock && (!text.contains("K爸測試，不會有真實訂單") || !text.contains(item.product))) return false;
         if (!mock && normalized(text).equals(previousCouponText)) return false;
         String primary = text.split("其他優惠券", 2)[0];
-        if (!primary.contains("加入好友") && !primary.contains("加好友") &&
-                !primary.contains("新增好友") && !primary.contains("加入官方帳號") &&
-                !primary.toLowerCase(Locale.ROOT).contains("add friend")) return false;
+        if (!containsFriendPrompt(primary)) return false;
         if (hasPrimaryRedemptionControl(root)) return false;
+        if (friendJoinAttempts >= 2) {
+            closeAndFinish("not_friend", "加入好友兩次未成功・保留稍後重試");
+            return true;
+        }
         AccessibilityNodeInfo friendDraw = findPrimaryAction(root, "加入好友並參加抽獎");
         if (friendDraw != null && friendDraw.isEnabled()) {
             friendJoinAttempted = true;
+            friendJoinAttempts++;
             if (attemptDraw(friendDraw, item)) {
                 Log.i(TAG, "join friend and draw item " + (index + 1));
                 return true;
@@ -364,8 +585,9 @@ public final class DrawAccessibilityService extends AccessibilityService {
             return false;
         }
         AccessibilityNodeInfo join = findText(root, "加入好友", "加好友", "新增好友", "加入官方帳號", "Add friend", "Add as friend");
-        if (join == null || !join.isEnabled() || !clickNode(join)) return false;
+        if (join == null || !clickNode(join)) return false;
         friendJoinAttempted = true;
+        friendJoinAttempts++;
         stage = "joining";
         stageAt = System.currentTimeMillis();
         updateOverlay("加入好友後確認同一筆抽獎");
@@ -382,10 +604,10 @@ public final class DrawAccessibilityService extends AccessibilityService {
         if (root != null) {
             String packageName = root.getPackageName() == null ? "" : root.getPackageName().toString();
             String text = collectText(root, new StringBuilder(), 0).toString();
+            String primary = ReviewSignals.primary(text);
             ready = (packageName.equals("jp.naver.line.android") ||
                     (item.origin.equals("mock") && packageName.equals(getPackageName()))) &&
-                    text.contains("參加抽獎") &&
-                    findText(root, "加入好友", "加好友", "新增好友", "加入官方帳號", "Add friend", "Add as friend") == null;
+                    primary.contains("參加抽獎") && !containsFriendPrompt(primary);
             root.recycle();
         }
         stage = "opening";
@@ -393,12 +615,15 @@ public final class DrawAccessibilityService extends AccessibilityService {
         verifiedCurrent = false;
         if (ready) {
             updateOverlay("好友已加入・確認抽獎頁");
-            handler.post(inspectRunnable);
+            scheduleInspect(0);
         } else {
             updateOverlay("重新開啟同一筆連結");
+            // The first click may be acknowledged by Accessibility before LINE
+            // actually joins the account. Allow one verified retry after reopening.
+            friendJoinAttempted = false;
             if (item.origin.equals("mock")) {
                 // The offline fixture changes in place; let the normal timeout report an unresolved prompt.
-                handler.post(inspectRunnable);
+                scheduleInspect(0);
             } else launchCurrentLink(item);
         }
     }
@@ -414,7 +639,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
         stageAt = System.currentTimeMillis();
         updateOverlay("確認「參加抽獎」是否真的觸發");
         Log.i(TAG, "accessibility draw action item " + (index + 1) + "; awaiting page transition");
-        handler.postDelayed(inspectRunnable, 650);
+        scheduleInspect(650);
         return true;
     }
 
@@ -544,6 +769,16 @@ public final class DrawAccessibilityService extends AccessibilityService {
         AccessibilityNodeInfo active = getRootInActiveWindow();
         if (isCouponRoot(active)) return active;
         if (active != null) active.recycle();
+        if (Build.VERSION.SDK_INT < 30) {
+            List<AccessibilityWindowInfo> windows = getWindows();
+            if (windows == null) return null;
+            for (AccessibilityWindowInfo window : windows) {
+                AccessibilityNodeInfo root = window == null ? null : window.getRoot();
+                if (isCouponRoot(root)) return root;
+                if (root != null) root.recycle();
+            }
+            return null;
+        }
         SparseArray<List<AccessibilityWindowInfo>> displays = getWindowsOnAllDisplays();
         for (int display = 0; display < displays.size(); display++) {
             List<AccessibilityWindowInfo> windows = displays.valueAt(display);
@@ -602,8 +837,10 @@ public final class DrawAccessibilityService extends AccessibilityService {
     // In that case, OCR must see an exact allowlisted bottom action before any gesture.
     private void inspectVisual() {
         DrawItem item = current();
+        if (Build.VERSION.SDK_INT < 30) return;
+        long visualInterval = DrawData.lowMemoryMode(this) ? 900L : (reviewMode ? 400L : 650L);
         if (item == null || item.origin.equals("mock") || visualInFlight ||
-                System.currentTimeMillis() - lastVisualAt < (reviewMode ? 400 : 650) || !lineIsForeground()) return;
+                System.currentTimeMillis() - lastVisualAt < visualInterval || !lineIsForeground()) return;
         visualInFlight = true;
         lastVisualAt = System.currentTimeMillis();
         if (visualReader == null) visualReader = new VisualCouponReader(DrawData.lowMemoryMode(this));
@@ -611,6 +848,14 @@ public final class DrawAccessibilityService extends AccessibilityService {
             @Override public void onRead(VisualCouponReader.Frame frame) {
                 visualInFlight = false;
                 if (!running || paused || current() != item) return;
+                String visualText = normalized(frame.text);
+                lastVisualPageText = visualText;
+                if (fastHandoffPending && frame.couponPage()) {
+                    if (visualText.equals(previousCouponText)) return;
+                    fastHandoffPending = false;
+                    consecutiveHandoffFailures = 0;
+                    updateOverlay("下一筆已載入");
+                }
                 Log.i(TAG, "visual " + stage + " coupon=" + frame.couponPage() +
                         " bottom=" + frame.bottomLabel);
                 // LINE briefly replaces the whole coupon with a loading page. Its OCR
@@ -626,6 +871,11 @@ public final class DrawAccessibilityService extends AccessibilityService {
                 if (stage.equals("opening") && System.currentTimeMillis() - stageAt >= 350 &&
                         CouponPageSignals.isEnded(ReviewSignals.primary(frame.text))) {
                     closeAndFinish("expired", "優惠券已結束・跳下一筆");
+                    return;
+                }
+                if (stage.equals("opening") && System.currentTimeMillis() - stageAt >= 350 &&
+                        CouponPageSignals.isBusy(ReviewSignals.primary(frame.text))) {
+                    closeAndFinish("busy", "LINE 系統忙碌・保留稍後重試");
                     return;
                 }
                 if (!frame.couponPage()) return;
@@ -657,6 +907,10 @@ public final class DrawAccessibilityService extends AccessibilityService {
             closeAndFinish("scheduled", "尚未開賣・保留待抽");
             return;
         }
+        if (CouponPageSignals.isBusy(text)) {
+            closeAndFinish("busy", "LINE 系統忙碌・保留稍後重試");
+            return;
+        }
         if (hasProcessedText(text) || CouponSafety.isRedemptionLabel(frame.bottomLabel)) {
             closeAndFinish("already", "已抽過・跳下一筆；不碰使用優惠券");
             return;
@@ -672,7 +926,12 @@ public final class DrawAccessibilityService extends AccessibilityService {
         if (visualCandidateCount < 2) return;
         if (CouponSafety.isFriendJoinLabel(label)) {
             if (friendJoinAttempted) return;
+            if (friendJoinAttempts >= 2) {
+                closeAndFinish("not_friend", "加入好友兩次未成功・保留稍後重試");
+                return;
+            }
             friendJoinAttempted = true;
+            friendJoinAttempts++;
             stage = "joining";
             stageAt = System.currentTimeMillis();
             if (!tapVisual(frame, label)) { haltForSafety("加入好友按鈕未能點擊"); return; }
@@ -740,6 +999,13 @@ public final class DrawAccessibilityService extends AccessibilityService {
                 label.equals("參加抽選") || label.equals("立即抽選");
     }
 
+    private boolean containsFriendPrompt(String text) {
+        String primary = ReviewSignals.primary(text == null ? "" : text);
+        return primary.contains("加入好友") || primary.contains("加好友") ||
+                primary.contains("新增好友") || primary.contains("加入官方帳號") ||
+                primary.toLowerCase(Locale.ROOT).contains("add friend");
+    }
+
     private boolean safeVisualBounds(VisualCouponReader.Frame frame) {
         Rect bounds = frame.bottomBounds;
         return !bounds.isEmpty() && bounds.centerY() >= frame.height * 0.78 &&
@@ -764,9 +1030,9 @@ public final class DrawAccessibilityService extends AccessibilityService {
         }, handler);
     }
 
-    private boolean matchesTestCoupon(String text, String product) {
+    private boolean matchesTestCoupon(String text, DrawItem item) {
         String page = normalized(text);
-        String name = normalized(product);
+        String name = normalized(TestCatalog.expectedPageProduct(item));
         int title = page.indexOf(name);
         int otherCoupons = page.indexOf("其他優惠券");
         return title >= 0 && (otherCoupons < 0 || title < otherCoupons);
@@ -776,7 +1042,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
 
     private boolean hasProcessedText(String text) {
         return text.contains("可惜...沒有抽中") || text.contains("沒有抽中！") ||
-                text.contains("未中獎") || text.contains("恭喜中獎") ||
+                text.contains("沒有中獎") || text.contains("未中獎") || text.contains("恭喜中獎") ||
                 text.contains("已抽過") || text.contains("已抽選") ||
                 text.contains("已參加抽選") || text.contains("已參加抽獎");
     }
@@ -831,7 +1097,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
         running = false;
         paused = true;
         stage = "safety-stop";
-        handler.removeCallbacks(inspectRunnable);
+        cancelInspect();
         releaseVisualReader();
         OrientationGuard.restore(this);
         if (pauseButton != null) {
@@ -931,12 +1197,85 @@ public final class DrawAccessibilityService extends AccessibilityService {
     }
 
     private void closeAndFinish(String status, String description) {
+        if (!running || finishing || stage.equals("handoff") || stage.equals("closing")) return;
+        if (HandoffPolicy.shouldDirect(fastHandoffEnabled, manualCheck, index, queue.size())) {
+            long wait = reviewMode ? 0L : WaitPolicy.sampleMillis(DrawData.delay(this));
+            stage = "handoff";
+            nextAt = System.currentTimeMillis() + wait;
+            updateOverlay(wait == 0 ? "背景開啟下一筆" :
+                    String.format(Locale.TAIWAN, "快速接力 · %.2f 秒", wait / 1000.0));
+            handler.postDelayed(new Runnable() {
+                @Override public void run() {
+                    if (!running || current() == null || !stage.equals("handoff")) return;
+                    if (paused) { handler.postDelayed(this, 250); return; }
+                    long remaining = nextAt - System.currentTimeMillis();
+                    if (remaining > 0) { handler.postDelayed(this, remaining); return; }
+                    fastHandoffPending = true;
+                    finishItem(status, description);
+                }
+            }, wait);
+            return;
+        }
+        if (!reviewMode && index + 1 < queue.size()) {
+            long wait = WaitPolicy.sampleMillis(DrawData.delay(this));
+            stage = "handoff";
+            nextAt = System.currentTimeMillis() + wait;
+            updateOverlay(String.format(Locale.TAIWAN, "準備下一筆 · %.2f 秒", wait / 1000.0));
+            handler.postDelayed(new Runnable() {
+                @Override public void run() {
+                    if (!running || current() == null || !stage.equals("handoff")) return;
+                    if (paused) { handler.postDelayed(this, 250); return; }
+                    long remaining = nextAt - System.currentTimeMillis();
+                    if (remaining > 0) { handler.postDelayed(this, remaining); return; }
+                    beginCloseAndFinish(status, description);
+                }
+            }, wait);
+            return;
+        }
+        beginCloseAndFinish(status, description);
+    }
+
+    private void beginCloseAndFinish(String status, String description) {
         if (!running || finishing || stage.equals("closing")) return;
+        fastHandoffPending = false;
         stage = "closing";
         stageAt = System.currentTimeMillis();
         updateOverlay("關閉優惠券，準備下一筆");
         clickCloseControl();
         handler.postDelayed(() -> verifyClosed(status, description, 0, 0), reviewMode ? 180 : 450);
+    }
+
+    private void recoverFastHandoff() {
+        if (!running || !fastHandoffPending || !stage.equals("opening") || current() == null) return;
+        DrawItem item = current();
+        fastHandoffPending = false;
+        consecutiveHandoffFailures++;
+        if (consecutiveHandoffFailures >= 2) fastHandoffEnabled = false;
+        stage = "recovering";
+        stageAt = System.currentTimeMillis();
+        updateOverlay(fastHandoffEnabled ? "快速切換未回應・重新開啟" : "已自動改用相容模式");
+        clickCloseControl();
+        handler.postDelayed(() -> verifyClosedForRetry(item, 0), 420L);
+    }
+
+    private void verifyClosedForRetry(DrawItem item, int attempts) {
+        if (!running || current() != item || !stage.equals("recovering")) return;
+        if (paused) { handler.postDelayed(() -> verifyClosedForRetry(item, attempts), 250L); return; }
+        AccessibilityNodeInfo root = couponRoot();
+        boolean stillOpen = isCouponRoot(root) || lineCouponCloseVisible();
+        if (root != null) root.recycle();
+        if (!stillOpen) {
+            updateOverlay("相容模式重新開啟同一筆");
+            openCurrent();
+            return;
+        }
+        if (attempts >= 3) {
+            haltForSafety("快速接力失敗，優惠券也未能安全關閉");
+            return;
+        }
+        if (attempts < 2) clickCloseControl();
+        else performGlobalAction(GLOBAL_ACTION_BACK);
+        handler.postDelayed(() -> verifyClosedForRetry(item, attempts + 1), 500L);
     }
 
     private void verifyClosed(String status, String description, int attempts, int absentChecks) {
@@ -949,8 +1288,8 @@ public final class DrawAccessibilityService extends AccessibilityService {
         boolean couponStillOpen = isCouponRoot(root) || lineCouponCloseVisible();
         if (root != null) root.recycle();
         if (!couponStillOpen) {
-            if (absentChecks >= 1) finishItem(status, description);
-            else handler.postDelayed(() -> verifyClosed(status, description, attempts, 1), reviewMode ? 180 : 300);
+            if (!reviewMode || absentChecks >= 1) finishItem(status, description);
+            else handler.postDelayed(() -> verifyClosed(status, description, attempts, 1), 180);
             return;
         }
         if (attempts >= 3) {
@@ -1038,15 +1377,18 @@ public final class DrawAccessibilityService extends AccessibilityService {
                     item.status = "not_friend";
                     DrawData.updateItem(this, item);
                 }
+            } else if (status.equals("busy")) {
+                reviewBusy++;
+                if (!isTerminalStatus(item.status)) {
+                    item.status = "busy";
+                    DrawData.updateItem(this, item);
+                }
             } else if (status.equals("not_drawn") || status.equals("pending")) {
                 reviewNotDrawn++;
-                if (status.equals("not_drawn") && isClaimedProcessed(item.status)) {
-                    reviewMismatches++;
-                    reviewOutcomes.put(item.key(), "mismatch");
-                    if (reviewProblems.size() < 30) reviewProblems.add(item.store + " · " + item.product + "：先前標完成，但頁面仍可抽");
-                    item.status = "error";
-                    DrawData.updateItem(this, item);
-                } else if (!isTerminalStatus(item.status)) {
+                if (!isTerminalStatus(item.status)) {
+                    // The live page is the source of truth. If it still offers
+                    // "參加抽獎", this link is simply not drawn yet and must be
+                    // selectable again instead of being buried as an error.
                     item.status = "pending";
                     DrawData.updateItem(this, item);
                 }
@@ -1072,29 +1414,24 @@ public final class DrawAccessibilityService extends AccessibilityService {
 
     private void persistAndAdvance(DrawItem item) {
         if (!reviewMode && !item.origin.equals("mock")) DrawData.updateItem(this, item);
-        long delay = reviewMode ? 60L : WaitPolicy.sampleMillis(DrawData.delay(this));
         stage = "next";
-        nextAt = System.currentTimeMillis() + delay;
-        updateOverlay(String.format(Locale.TAIWAN, "每筆完成等待 %.2f 秒", delay / 1000.0));
-        handler.postDelayed(new Runnable() {
+        nextAt = System.currentTimeMillis();
+        updateOverlay(index + 1 < queue.size() ? "背景開啟下一筆" : "本次任務完成");
+        handler.post(new Runnable() {
             @Override public void run() {
                 if (!running) return;
-                if (paused) { handler.postDelayed(this, 250); return; }
-                long remaining = nextAt - System.currentTimeMillis();
-                if (remaining > 0) { handler.postDelayed(this, remaining); return; }
+                if (paused) {
+                    handler.postDelayed(this, 250L);
+                    return;
+                }
                 index++;
                 openCurrent();
             }
-        }, delay);
+        });
     }
 
     private boolean isTerminalStatus(String status) {
         return status.equals("win") || status.equals("lose") || status.equals("expired");
-    }
-
-    private boolean isClaimedProcessed(String status) {
-        return status.equals("done") || status.equals("already") ||
-                status.equals("win") || status.equals("lose");
     }
 
     private void completeRun() {
@@ -1108,13 +1445,16 @@ public final class DrawAccessibilityService extends AccessibilityService {
         } else {
             String report = regularRunReport();
             DrawData.saveRunReport(this, report);
-            if (isTestRun()) DrawData.saveTestReport(this, testRunReport());
+            boolean testRun = isTestRun();
+            DrawData.saveRunReportType(this, testRun);
+            if (testRun) DrawData.saveTestReport(this, testRunReport());
         }
         updateOverlay("已處理 " + queue.size() + " / " + queue.size());
         handler.postDelayed(() -> {
             hideOverlay();
             Intent intent = new Intent(this, MainActivity.class);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP |
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP);
             startActivity(intent);
         }, 1500);
     }
@@ -1123,8 +1463,57 @@ public final class DrawAccessibilityService extends AccessibilityService {
         if (paused) return;
         paused = true;
         pausedAt = System.currentTimeMillis();
+        Log.i(TAG, "run paused at item " + (index + 1));
         if (pauseButton != null) pauseButton.setText("繼續");
         updateOverlay("已暫停");
+    }
+
+    private void resumeRun() {
+        if (!paused || !running) return;
+        long pauseDuration = System.currentTimeMillis() - pausedAt;
+        pausedTotalMs += pauseDuration;
+        stageAt += pauseDuration;
+        closeAt += pauseDuration;
+        nextAt += pauseDuration;
+        paused = false;
+        Log.i(TAG, "run resumed at item " + (index + 1));
+        if (pauseButton != null) pauseButton.setText("暫停");
+        scheduleInspect(0);
+        updateOverlay("繼續抽選");
+    }
+
+    private void togglePauseRun() {
+        if (!running) return;
+        if (paused) resumeRun();
+        else pauseRun();
+    }
+
+    private long remainingMs() {
+        if (!running || paused) return 0;
+        long now = System.currentTimeMillis();
+        if (stage.equals("opening")) return Math.max(0, stageAt + openingTimeoutMs() - now);
+        if (stage.equals("submitted")) return Math.max(0, closeAt - now);
+        if (stage.equals("handoff") || stage.equals("next")) return Math.max(0, nextAt - now);
+        return 0;
+    }
+
+    private long openingTimeoutMs() {
+        long configured = Math.max(3000L, Math.round(DrawData.errorDelay(this) * 1000f));
+        return reviewMode ? Math.min(configured, 10000L) : configured;
+    }
+
+    private RunUiSnapshot buildUiSnapshot() {
+        int total = queue.size();
+        DrawItem item = current();
+        int current = running && item != null ? Math.min(total, index + 1) : Math.min(total, processedCount);
+        long elapsed = runStartedAt == 0 ? 0 : Math.max(0, System.currentTimeMillis() - runStartedAt);
+        long pausedTime = pausedTotalMs + (paused ? Math.max(0, System.currentTimeMillis() - pausedAt) : 0);
+        long activeMs = Math.max(0, elapsed - pausedTime);
+        double average = processedCount == 0 ? 0 : activeMs / 1000.0 / processedCount;
+        String phaseLabel = !running ? "已完成" : paused ? "已暫停" : reviewMode ? "只讀重掃中" : "執行中";
+        return new RunUiSnapshot(running, paused, current, total, processedCount,
+                item == null ? "" : item.product, phaseLabel, overlayStatus,
+                remainingMs(), elapsed, average);
     }
 
     private void stopRun() {
@@ -1136,7 +1525,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
         paused = false;
         finishing = false;
         queue.clear();
-        handler.removeCallbacks(inspectRunnable);
+        cancelInspect();
         handler.removeCallbacks(overlayTick);
         releaseVisualReader();
         OrientationGuard.restore(this);
@@ -1154,10 +1543,10 @@ public final class DrawAccessibilityService extends AccessibilityService {
         result.append("確認未中：").append(reviewLosses).append(" 筆\n");
         result.append("未開賣：").append(reviewScheduled).append(" 筆\n");
         result.append("未加好友：").append(reviewNotFriend).append(" 筆\n");
+        result.append("系統忙碌：").append(reviewBusy).append(" 筆\n");
         result.append("未抽籤：").append(reviewNotDrawn).append(" 筆\n");
         result.append("已結束／免重抽：").append(reviewEnded).append(" 筆\n");
         result.append("無法判定：").append(reviewUncertain).append(" 筆\n\n");
-        result.append("疑似漏按且已重新列待處理：").append(reviewMismatches).append(" 筆\n\n");
         if (reviewWinners.isEmpty()) result.append("本次沒有確認中獎的連結。\n");
         else {
             result.append("確認中獎清單：\n");
@@ -1177,6 +1566,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
         int ended = 0;
         int scheduled = 0;
         int notFriend = 0;
+        int busy = 0;
         int problems = 0;
         for (DrawItem item : queue) {
             if (item.status.equals("done")) operated++;
@@ -1184,6 +1574,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
             else if (item.status.equals("expired")) ended++;
             else if (item.status.equals("scheduled")) scheduled++;
             else if (item.status.equals("not_friend")) notFriend++;
+            else if (item.status.equals("busy")) busy++;
             else if (item.status.equals("error")) problems++;
         }
         return "本次任務完成 " + queue.size() + " 筆\n\n" +
@@ -1191,6 +1582,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
                 "已抽過並跳過：" + already + " 筆\n" +
                 "未開賣：" + scheduled + " 筆\n" +
                 "未加好友：" + notFriend + " 筆\n" +
+                "系統忙碌：" + busy + " 筆\n" +
                 "已結束：" + ended + " 筆\n" +
                 "需要確認：" + problems + " 筆\n\n" +
                 "本流程不判讀即時中獎結果，也永遠不操作「使用優惠券」。可到「結果」執行只讀重掃。";
@@ -1220,6 +1612,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
         if (status.equals("expired")) return "已結束";
         if (status.equals("scheduled")) return "未開賣";
         if (status.equals("not_friend")) return "未加好友";
+        if (status.equals("busy")) return "系統忙碌";
         if (status.equals("win")) return "中獎畫面";
         if (status.equals("lose")) return "未中獎畫面";
         if (status.equals("error")) return "需檢查";
@@ -1229,6 +1622,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
     private String reviewReason(String status) {
         if (status.equals("scheduled")) return "尚未開賣";
         if (status.equals("not_friend")) return "尚未加入官方帳號";
+        if (status.equals("busy")) return "LINE 系統忙碌，稍後可重試";
         if (status.equals("expired")) return "優惠券已結束／失效";
         if (status.equals("error")) return "頁面載入或關閉失敗";
         return "畫面未明確顯示抽選結果";
@@ -1236,85 +1630,176 @@ public final class DrawAccessibilityService extends AccessibilityService {
 
     private void showOverlay() {
         if (overlay != null) return;
-        windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
-        LinearLayout card = new LinearLayout(this);
+        targetDisplayId = requestedStartDisplayId == Display.INVALID_DISPLAY
+                ? detectRunDisplay() : requestedStartDisplayId;
+        showOverlayOnDisplay(targetDisplayId, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY);
+    }
+
+    private int detectRunDisplay() {
+        if (Build.VERSION.SDK_INT < 30) return Display.DEFAULT_DISPLAY;
+        int activeOwnDisplay = Display.INVALID_DISPLAY;
+        int activeLineDisplay = Display.INVALID_DISPLAY;
+        int visibleOwnDisplay = Display.INVALID_DISPLAY;
+        try {
+            SparseArray<List<AccessibilityWindowInfo>> all = getWindowsOnAllDisplays();
+            for (int i = 0; i < all.size(); i++) {
+                int displayId = all.keyAt(i);
+                List<AccessibilityWindowInfo> windows = all.valueAt(i);
+                if (windows == null) continue;
+                for (AccessibilityWindowInfo info : windows) {
+                    AccessibilityNodeInfo root = info == null ? null : info.getRoot();
+                    if (root == null) continue;
+                    try {
+                        CharSequence packageName = root.getPackageName();
+                        if (packageName == null) continue;
+                        String value = packageName.toString();
+                        boolean active = info.isActive() || info.isFocused();
+                        if (value.equals(getPackageName())) {
+                            if (active) activeOwnDisplay = displayId;
+                            else visibleOwnDisplay = displayId;
+                        } else if (value.equals("jp.naver.line.android") && active) {
+                            activeLineDisplay = displayId;
+                        }
+                    } finally { root.recycle(); }
+                }
+            }
+        } catch (Exception error) {
+            Log.w(TAG, "unable to detect active display", error);
+        }
+        if (activeOwnDisplay != Display.INVALID_DISPLAY) return activeOwnDisplay;
+        if (activeLineDisplay != Display.INVALID_DISPLAY) return activeLineDisplay;
+        if (visibleOwnDisplay != Display.INVALID_DISPLAY) return visibleOwnDisplay;
+        return Display.DEFAULT_DISPLAY;
+    }
+
+    private void moveOverlayToDisplay(int displayId) {
+        if (!running || displayId == Display.INVALID_DISPLAY || displayId == overlayDisplayId) return;
+        handler.post(() -> {
+            if (!running || displayId == overlayDisplayId) return;
+            Log.i(TAG, "move overlay display " + overlayDisplayId + " -> " + displayId);
+            hideOverlay();
+            showOverlayOnDisplay(displayId, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY);
+            paintOverlay();
+        });
+    }
+
+    private Context windowContextFor(int displayId, int type) {
+        try {
+            DisplayManager manager = getSystemService(DisplayManager.class);
+            Display display = manager == null ? null : manager.getDisplay(displayId);
+            if (display == null) return null;
+            Context displayContext = createDisplayContext(display);
+            return Build.VERSION.SDK_INT >= 30 ? displayContext.createWindowContext(type, null) : displayContext;
+        } catch (Exception error) {
+            Log.w(TAG, "window context unavailable for display " + displayId, error);
+            return null;
+        }
+    }
+
+    private void showOverlayOnDisplay(int displayId, int type) {
+        if (overlay != null) return;
+        Context uiContext = windowContextFor(displayId, type);
+        if (uiContext == null) {
+            displayId = Display.DEFAULT_DISPLAY;
+            uiContext = windowContextFor(displayId, type);
+        }
+        if (uiContext == null) uiContext = this;
+        overlayContext = uiContext;
+        windowManager = uiContext.getSystemService(WindowManager.class);
+        LinearLayout card = new LinearLayout(uiContext);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(8), dp(5), dp(8), dp(5));
-        card.setBackgroundColor(0xF2EAF3FF);
-        LinearLayout row = new LinearLayout(this);
+        card.setPadding(dp(11), dp(10), dp(11), dp(8));
+        card.setBackground(overlayBackground(0xF2FFFFFF, 0xAAFFFFFF, 20));
+        card.setElevation(dp(12));
+        LinearLayout row = new LinearLayout(uiContext);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        progressIcon = new ProgressBar(this, null, android.R.attr.progressBarStyleSmall);
-        progressIcon.setIndeterminateTintList(ColorStateList.valueOf(0xFF08A84F));
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(26), dp(26));
-        iconParams.rightMargin = dp(8);
+        progressIcon = new ImageView(uiContext);
+        progressIcon.setImageResource(R.drawable.fangba_app_icon);
+        progressIcon.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        progressIcon.setBackground(overlayBackground(0xFFE1F7ED, 0xAAFFFFFF, 12));
+        progressIcon.setClipToOutline(true);
+        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(dp(36), dp(36));
+        iconParams.rightMargin = dp(9);
         row.addView(progressIcon, iconParams);
-        LinearLayout labels = new LinearLayout(this);
+        LinearLayout labels = new LinearLayout(uiContext);
         labels.setOrientation(LinearLayout.VERTICAL);
-        overlayText = new TextView(this);
+        overlayText = new TextView(uiContext);
         overlayText.setTextColor(0xFF11223B);
-        overlayText.setTextSize(13);
+        overlayText.setTextSize(12);
         overlayText.setTypeface(null, Typeface.BOLD);
+        overlayText.setIncludeFontPadding(false);
+        overlayText.setSingleLine(true);
+        overlayText.setEllipsize(TextUtils.TruncateAt.END);
         labels.addView(overlayText);
-        overlayItem = new TextView(this);
+        overlayItem = new TextView(uiContext);
         overlayItem.setTextColor(0xFF425773);
-        overlayItem.setTextSize(11);
+        overlayItem.setTextSize(10);
         overlayItem.setSingleLine(true);
         overlayItem.setEllipsize(TextUtils.TruncateAt.END);
-        labels.addView(overlayItem);
-        overlayMeta = new TextView(this);
-        overlayMeta.setTextColor(0xFF425773);
-        overlayMeta.setTextSize(11);
+        overlayItem.setVisibility(View.GONE);
+        labels.addView(overlayItem, new LinearLayout.LayoutParams(0, 0));
+        overlayMeta = new TextView(uiContext);
+        overlayMeta.setTextColor(0xFF6D7F97);
+        overlayMeta.setTextSize(10);
+        overlayMeta.setIncludeFontPadding(false);
         overlayMeta.setSingleLine(true);
         overlayMeta.setEllipsize(TextUtils.TruncateAt.END);
         labels.addView(overlayMeta);
         row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
-        pauseButton = new Button(this);
+        pauseButton = new Button(uiContext);
         pauseButton.setText("暫停");
-        pauseButton.setTextSize(11);
-        pauseButton.setOnClickListener(v -> {
-            paused = !paused;
-            if (paused) pausedAt = System.currentTimeMillis();
-            else {
-                long pauseDuration = System.currentTimeMillis() - pausedAt;
-                pausedTotalMs += pauseDuration;
-                stageAt += pauseDuration;
-                closeAt += pauseDuration;
-                nextAt += pauseDuration;
-            }
-            pauseButton.setText(paused ? "繼續" : "暫停");
-            if (!paused) handler.post(inspectRunnable);
-            updateOverlay(paused ? "已暫停" : "繼續抽選");
-        });
-        row.addView(pauseButton, new LinearLayout.LayoutParams(dp(63), dp(40)));
-        Button stop = new Button(this);
+        pauseButton.setAllCaps(false);
+        pauseButton.setTextSize(10);
+        pauseButton.setTextColor(0xFF163052);
+        pauseButton.setBackground(overlayBackground(0xFFE1F7ED, 0xFFBFDDCF, 99));
+        pauseButton.setPadding(dp(7), 0, dp(7), 0);
+        pauseButton.setOnClickListener(v -> togglePauseRun());
+        LinearLayout.LayoutParams pauseParams = new LinearLayout.LayoutParams(dp(58), dp(36));
+        pauseParams.leftMargin = dp(7);
+        row.addView(pauseButton, pauseParams);
+        Button stop = new Button(uiContext);
         stop.setText("停止");
-        stop.setTextSize(11);
+        stop.setAllCaps(false);
+        stop.setTextSize(10);
+        stop.setTextColor(0xFFB44740);
+        stop.setBackground(overlayBackground(0xFFFFEFEF, 0xFFEFCBC8, 99));
+        stop.setPadding(dp(7), 0, dp(7), 0);
         stop.setOnClickListener(v -> stopRun());
-        row.addView(stop, new LinearLayout.LayoutParams(dp(59), dp(40)));
+        LinearLayout.LayoutParams stopParams = new LinearLayout.LayoutParams(dp(54), dp(36));
+        stopParams.leftMargin = dp(6);
+        row.addView(stop, stopParams);
         card.addView(row);
-        progressLine = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progressLine = new ProgressBar(uiContext, null, android.R.attr.progressBarStyleHorizontal);
         progressLine.setMax(Math.max(1, queue.size()));
-        progressLine.setProgressTintList(ColorStateList.valueOf(0xFF315F9D));
-        LinearLayout.LayoutParams lineParams = new LinearLayout.LayoutParams(-1, dp(4));
-        lineParams.topMargin = dp(4);
+        progressLine.setProgressTintList(ColorStateList.valueOf(0xFF2A7568));
+        progressLine.setProgressBackgroundTintList(ColorStateList.valueOf(0xFFE8E2D8));
+        LinearLayout.LayoutParams lineParams = new LinearLayout.LayoutParams(-1, dp(5));
+        lineParams.topMargin = dp(7);
         card.addView(progressLine, lineParams);
-        int type = Settings.canDrawOverlays(this) ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY :
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY;
+        int overlayWidth = Math.max(dp(300), uiContext.getResources().getDisplayMetrics().widthPixels - dp(16));
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                -1, -2, type,
+                overlayWidth, -2, type,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 android.graphics.PixelFormat.TRANSLUCENT);
-        params.gravity = Gravity.TOP;
+        params.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
         // Keep LINE's top-right close control unobstructed.
         params.y = dp(58);
-        try { windowManager.addView(card, params); overlay = card; Log.i(TAG, "overlay type=" + type); }
+        final int actualDisplayId = displayId;
+        try {
+            if (windowManager == null) throw new IllegalStateException("WindowManager unavailable");
+            windowManager.addView(card, params);
+            overlay = card;
+            overlay.setVisibility(View.VISIBLE);
+            overlayDisplayId = actualDisplayId;
+            targetDisplayId = actualDisplayId;
+            Log.i(TAG, "overlay type=" + type + " display=" + actualDisplayId);
+        }
         catch (Exception error) {
-            Log.w(TAG, "overlay unavailable", error);
-            if (type == WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY) {
-                params.type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY;
-                try { windowManager.addView(card, params); overlay = card; Log.i(TAG, "overlay accessibility fallback"); }
-                catch (Exception fallback) { Log.w(TAG, "accessibility overlay unavailable", fallback); }
+            Log.w(TAG, "overlay unavailable type=" + type + " display=" + actualDisplayId, error);
+            clearOverlayReferences();
+            if (type == WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY && Settings.canDrawOverlays(this)) {
+                showOverlayOnDisplay(actualDisplayId, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
             }
         }
     }
@@ -1326,35 +1811,41 @@ public final class DrawAccessibilityService extends AccessibilityService {
 
     private void paintOverlay() {
         if (overlayText == null) return;
-        if (progressIcon != null) progressIcon.setVisibility(running && !paused ? View.VISIBLE : View.INVISIBLE);
-        if (progressLine != null) progressLine.setProgress(processedCount);
-        String countdown = "";
-        if (running && !paused) {
-            long remaining = stage.equals("opening") ? stageAt + 20000 - System.currentTimeMillis() :
-                    stage.equals("submitted") ? closeAt - System.currentTimeMillis() :
-                    stage.equals("next") ? nextAt - System.currentTimeMillis() : 0;
-            if (stage.equals("opening") || stage.equals("submitted") || stage.equals("next"))
-                countdown = " · " + String.format(Locale.TAIWAN, "%.1f 秒", Math.max(0, remaining) / 1000.0);
-        }
-        String phase = !running ? "已完成" : paused ? "已暫停" : reviewMode ? "只讀重掃中" : "執行中";
-        overlayText.setText("已處理 " + processedCount + " / " + queue.size() + " · " + phase);
-        DrawItem item = current();
-        overlayItem.setText(item == null || !running ? "" :
-                "目前第 " + (index + 1) + " 筆 · " + item.store + " · " + item.product);
-        String speed = "";
-        if (processedCount >= 2) {
-            long pausedTime = pausedTotalMs + (paused ? System.currentTimeMillis() - pausedAt : 0);
-            long activeMs = Math.max(0, System.currentTimeMillis() - runStartedAt - pausedTime);
-            speed = String.format(Locale.TAIWAN, " · 均速 %.1f 秒/筆", activeMs / 1000.0 / processedCount);
-        }
-        overlayMeta.setText(overlayStatus + countdown + speed);
+        RunUiSnapshot snapshot = buildUiSnapshot();
+        if (progressIcon != null) progressIcon.setAlpha(snapshot.paused ? 0.58f : 1f);
+        if (progressLine != null) progressLine.setProgress(Math.max(snapshot.processed, snapshot.current));
+        if (pauseButton != null) pauseButton.setText(snapshot.paused ? "繼續" : "暫停");
+        String product = snapshot.product.isEmpty() ? snapshot.phase : snapshot.product;
+        overlayText.setText(snapshot.current + " / " + snapshot.total + " · " + product);
+        overlayItem.setText("");
+        StringBuilder meta = new StringBuilder(snapshot.phase);
+        if (snapshot.remainingMs > 0)
+            meta.append(String.format(Locale.TAIWAN, " · 剩 %.1f 秒", snapshot.remainingMs / 1000.0));
+        meta.append(" · 耗時 ").append(formatDuration(snapshot.elapsedMs));
+        if (snapshot.averageSeconds > 0)
+            meta.append(String.format(Locale.TAIWAN, " · %.1f 秒/筆", snapshot.averageSeconds));
+        overlayMeta.setText(meta.toString());
+    }
+
+    private String formatDuration(long milliseconds) {
+        long totalSeconds = Math.max(0, milliseconds / 1000);
+        long minutes = totalSeconds / 60;
+        long seconds = totalSeconds % 60;
+        return String.format(Locale.TAIWAN, "%02d:%02d", minutes, seconds);
     }
 
     private void hideOverlay() {
         if (overlay != null && windowManager != null) {
             try { windowManager.removeView(overlay); } catch (Exception ignored) {}
         }
+        clearOverlayReferences();
+    }
+
+    private void clearOverlayReferences() {
         overlay = null;
+        overlayContext = null;
+        overlayDisplayId = Display.INVALID_DISPLAY;
+        windowManager = null;
         overlayText = null;
         overlayItem = null;
         overlayMeta = null;

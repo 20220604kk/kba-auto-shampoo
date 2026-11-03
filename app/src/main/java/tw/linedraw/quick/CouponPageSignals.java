@@ -20,4 +20,15 @@ final class CouponPageSignals {
                 text.contains("抽選期間已結束") ||
                 text.contains("已過期");
     }
+
+    static boolean isBusy(String pageText) {
+        String text = CouponSafety.normalized(pageText);
+        return text.contains("系統忙碌中") ||
+                text.contains("系統繁忙") ||
+                text.contains("請稍後再開啟此頁面") ||
+                text.contains("請稍後再試") ||
+                text.contains("目前無法載入優惠券") ||
+                text.contains("systemisbusy") ||
+                text.contains("tryagainlater");
+    }
 }

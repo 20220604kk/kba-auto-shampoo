@@ -2,8 +2,11 @@ package tw.linedraw.quick;
 
 import android.accessibilityservice.AccessibilityService;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.Rect;
 import android.hardware.HardwareBuffer;
+import android.os.Build;
 import android.view.Display;
 
 import com.google.mlkit.vision.common.InputImage;
@@ -43,13 +46,17 @@ final class VisualCouponReader {
     private final int maxHeight;
 
     VisualCouponReader(boolean lowMemory) {
-        maxWidth = lowMemory ? 640 : 900;
-        maxHeight = lowMemory ? 1280 : 1800;
+        maxWidth = lowMemory ? 480 : 720;
+        maxHeight = lowMemory ? 960 : 1440;
     }
 
     void close() { recognizer.close(); }
 
     void read(AccessibilityService service, Callback callback) {
+        if (Build.VERSION.SDK_INT < 30) {
+            callback.onError("Android 10 使用低記憶體節點辨識");
+            return;
+        }
         try {
             service.takeScreenshot(Display.DEFAULT_DISPLAY, service.getMainExecutor(),
                     new AccessibilityService.TakeScreenshotCallback() {
@@ -57,53 +64,48 @@ final class VisualCouponReader {
                     HardwareBuffer buffer = result.getHardwareBuffer();
                     if (buffer == null) { callback.onError("畫面截圖為空"); return; }
                     Bitmap hardware = null;
-                    Bitmap bitmap = null;
-                    int screenWidth = 0;
-                    int screenHeight = 0;
+                    Bitmap image = null;
+                    int screenWidth;
+                    int screenHeight;
                     try {
                         hardware = Bitmap.wrapHardwareBuffer(buffer, result.getColorSpace());
                         if (hardware == null) { callback.onError("畫面截圖無法讀取"); return; }
                         screenWidth = hardware.getWidth();
                         screenHeight = hardware.getHeight();
-                        bitmap = hardware.copy(Bitmap.Config.ARGB_8888, false);
+                        double scale = Math.min(1.0, Math.min((double) maxWidth / screenWidth,
+                                (double) maxHeight / screenHeight));
+                        int targetWidth = Math.max(1, (int) Math.round(screenWidth * scale));
+                        int targetHeight = Math.max(1, (int) Math.round(screenHeight * scale));
+                        image = Bitmap.createBitmap(targetWidth, targetHeight, Bitmap.Config.ARGB_8888);
+                        Canvas canvas = new Canvas(image);
+                        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+                        canvas.drawBitmap(hardware, null, new Rect(0, 0, targetWidth, targetHeight), paint);
                     } catch (Exception error) {
+                        if (image != null) image.recycle();
                         callback.onError("畫面截圖轉換失敗");
                         return;
                     } finally {
                         if (hardware != null) hardware.recycle();
                         buffer.close();
                     }
-                    if (bitmap == null) { callback.onError("畫面截圖為空"); return; }
-                    double scale = Math.min(1.0, Math.min((double) maxWidth / screenWidth,
-                            (double) maxHeight / screenHeight));
-                    int targetWidth = Math.max(1, (int) Math.round(screenWidth * scale));
-                    int targetHeight = Math.max(1, (int) Math.round(screenHeight * scale));
-                    final Bitmap image;
-                    try {
-                        image = scale < 1.0 ?
-                                Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true) : bitmap;
-                    } catch (RuntimeException error) {
-                        bitmap.recycle();
-                        callback.onError("畫面縮放失敗");
-                        return;
-                    }
-                    if (image != bitmap) bitmap.recycle();
+                    if (image == null) { callback.onError("畫面截圖為空"); return; }
+                    final Bitmap recognitionImage = image;
                     final int actualScreenWidth = screenWidth;
                     final int actualScreenHeight = screenHeight;
                     try {
-                        recognizer.process(InputImage.fromBitmap(image, 0))
+                        recognizer.process(InputImage.fromBitmap(recognitionImage, 0))
                                 .addOnSuccessListener(text -> {
-                                    try { callback.onRead(toFrame(text, image.getWidth(), image.getHeight(),
+                                    try { callback.onRead(toFrame(text, recognitionImage.getWidth(), recognitionImage.getHeight(),
                                             actualScreenWidth, actualScreenHeight)); }
                                     catch (RuntimeException error) { callback.onError("畫面辨識資料無法處理"); }
-                                    finally { image.recycle(); }
+                                    finally { recognitionImage.recycle(); }
                                 })
                                 .addOnFailureListener(error -> {
-                                    image.recycle();
+                                    recognitionImage.recycle();
                                     callback.onError("畫面文字辨識失敗");
                                 });
                     } catch (RuntimeException error) {
-                        image.recycle();
+                        recognitionImage.recycle();
                         callback.onError("畫面辨識服務已停止");
                     }
                 }

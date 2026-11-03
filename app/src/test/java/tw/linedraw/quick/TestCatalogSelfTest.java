@@ -25,6 +25,14 @@ public final class TestCatalogSelfTest {
         expect(items.size(), 8, "link can be restored");
         TestCatalog.addDefaults(items, removed);
         expect(items.size(), 8, "no duplicate defaults");
+        DrawItem firstFixture = null;
+        DrawItem lastFixture = null;
+        for (DrawItem item : items) {
+            if (item.url.equals("https://lin.ee/ZmtaKXp")) firstFixture = item;
+            if (item.url.equals("https://lin.ee/UdzlJxu")) lastFixture = item;
+        }
+        if (firstFixture == null || !firstFixture.product.equals("模擬測試001-1% 不限次") || lastFixture == null)
+            throw new AssertionError("official test catalog mismatch");
         System.out.println("TestCatalogSelfTest passed");
     }
 }

@@ -9,18 +9,36 @@
     <application
         android:allowBackup="false"
         android:icon="@drawable/fangba_app_icon"
-        android:label="方爸全自動洗頭機"
+        android:label="K爸全自動洗頭機"
         android:roundIcon="@drawable/fangba_app_icon"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="false">
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:screenOrientation="portrait"
             android:theme="@style/AppTheme.Starting">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Discord and file managers commonly expose downloaded KBA files as
+                 generic binary or JSON documents.  Opening/sharing one now routes
+                 directly to the verifier instead of making the user browse twice. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/json" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
         <activity android:name=".MockCouponActivity" android:exported="false" android:screenOrientation="portrait" />
@@ -28,7 +46,7 @@
             android:name=".DrawAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="true"
-            android:label="方爸全自動洗頭機控制">
+            android:label="K爸全自動洗頭機控制">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>

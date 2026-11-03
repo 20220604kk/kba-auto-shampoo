@@ -19,12 +19,15 @@ final class ReviewSignals {
     /** Empty means keep waiting. "unknown" means visible but the result is not provable. */
     static String classify(String page, boolean redemptionControl) {
         String text = primary(page);
+        String compact = CouponSafety.normalized(text);
         if (text.contains("恭喜中獎") || text.contains("您已中獎") || text.contains("你已中獎")) return "win";
         if (text.contains("可惜...沒有抽中") || text.contains("沒有抽中！") ||
-                text.contains("未中獎")) return "lose";
+                text.contains("未中獎") || compact.contains("可惜，沒有中獎") ||
+                compact.contains("可惜...沒有中獎") || compact.contains("沒有中獎")) return "lose";
         if (redemptionControl) return "win";
         if (CouponPageSignals.isEnded(text)) return "expired";
         if (CouponPageSignals.isNotStarted(text)) return "scheduled";
+        if (CouponPageSignals.isBusy(text)) return "busy";
         if (text.contains("已抽選") || text.contains("已參加抽獎")) return "unknown";
         if (text.contains("加入好友") || text.contains("加好友") ||
                 text.contains("新增好友") || text.contains("加入官方帳號") ||

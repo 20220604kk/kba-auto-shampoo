@@ -6,10 +6,10 @@ android {
 
     defaultConfig {
         applicationId 'tw.linedraw.quick'
-        minSdk 30
+        minSdk 28
         targetSdk 35
-        versionCode 13
-        versionName '0.2.9'
+        versionCode 22
+        versionName '0.4.2a'
     }
 
     buildTypes {

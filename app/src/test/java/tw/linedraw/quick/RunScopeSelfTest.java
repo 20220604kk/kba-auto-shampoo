@@ -29,6 +29,8 @@ public final class RunScopeSelfTest {
         items.add(item("桃園市", "UX-03 魔導神杖", 24));
         items.add(item("桃園市", "UX-15 鮫鯊狂鱗", 25));
         items.add(item("台北市", "UX-15 鮫鯊狂鱗", 26));
+        items.add(item("台北市", "CX-00 迪卡狂怒 FT3-60T", 29));
+        items.add(item("台北市", "CX-00 新世紀福音戰士改造組", 30));
         DrawItem processed = item("桃園市", "UX-03 魔導神杖", 27);
         processed.status = "already";
         items.add(processed);
@@ -42,11 +44,19 @@ public final class RunScopeSelfTest {
         ArrayList<DrawItem> taoyuanUx03 = RunScope.visible(items, "ready", "北部", "桃園市", "UX-03");
         expect(taoyuanUx03.size(), 3, "visible Taoyuan UX-03 including uncertain");
         expect(RunScope.bulkSelectable(taoyuanUx03.get(0)), true, "pending bulk selectable");
-        expect(RunScope.bulkSelectable(uncertain), false, "uncertain must be selected individually");
+        expect(RunScope.bulkSelectable(uncertain), true, "retryable uncertain item follows store selection");
         expect(RunScope.bulkSelectable(processed), false, "processed never bulk selectable");
+        DrawItem busy = item("桃園市", "UX-03 魔導神杖", 31);
+        busy.status = "busy";
+        expect(RunScope.eligible(busy), true, "busy item remains retryable");
+        expect(RunScope.bulkSelectable(busy), true, "busy item follows store selection");
         expect(RunScope.queue(taoyuanUx03, "ready").size(), 0, "unselected visible items are never queued");
         expect(RunScope.visible(items, "ready", RegionCatalog.ALL, RegionCatalog.ALL_CITIES, "UX-15").size(), 2, "all Taiwan UX-15");
         expect(RunScope.visible(items, "ready", "北部", "台北市", "UX-15").size(), 1, "Taipei UX-15");
+        expect(RunScope.visible(items, "ready", "北部", "台北市", "CX-00 迪卡狂怒").size(), 1,
+                "CX-00 Dika must not include EVA");
+        expect(RunScope.visible(items, "ready", "北部", "台北市", "CX-00 新世紀福音戰士改造組").size(), 1,
+                "CX-00 EVA must not include Dika");
         expect(RunScope.visible(items, "ready", new HashSet<>(Arrays.asList("北部")),
                 new HashSet<>(Arrays.asList("台北市", "桃園市")),
                 new HashSet<>(Arrays.asList("UX-03", "UX-15"))).size(), 5,
