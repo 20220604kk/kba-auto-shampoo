@@ -42,6 +42,7 @@ final class DrawData {
     private static final String ITEM_OVERRIDE_PREFIX = "item-override:";
     private static final String REMOVED_TEST_URLS = "removed-test-urls";
     private static final String DATA_MIGRATION = "data-migration";
+    private static final String STATUS_REVISION = "status-revision";
     private static final Pattern TEST_LINK_PATTERN = Pattern.compile("https://(?:lin\\.ee|line\\.me)/[^\\s)\\]>]+", Pattern.CASE_INSENSITIVE);
     private static final Pattern CUSTOM_TEST_NUMBER = Pattern.compile("自訂測試 (\\d+)");
     private static final Pattern PERIOD_DATE = Pattern.compile("(20\\d{2})[/-](\\d{1,2})[/-](\\d{1,2})");
@@ -104,8 +105,16 @@ final class DrawData {
             state.put("screenshot", changed.screenshot);
             state.put("updatedAt", System.currentTimeMillis());
             state.put("selected", RunScope.eligible(changed) && changed.selected);
-            prefs(context).edit().putString(ITEM_OVERRIDE_PREFIX + changed.key(), state.toString()).apply();
+            SharedPreferences store = prefs(context);
+            long revision = Math.max(System.currentTimeMillis(), store.getLong(STATUS_REVISION, 0L) + 1L);
+            store.edit().putString(ITEM_OVERRIDE_PREFIX + changed.key(), state.toString())
+                    .putLong(STATUS_REVISION, revision).apply();
         } catch (JSONException ignored) {}
+    }
+
+    /** Changes written by the accessibility service must invalidate the Activity's in-memory list. */
+    static long statusRevision(Context context) {
+        return prefs(context).getLong(STATUS_REVISION, 0L);
     }
 
     static synchronized void clearSelections(Context context) {

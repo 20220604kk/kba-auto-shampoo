@@ -31,4 +31,12 @@ final class CouponPageSignals {
                 text.contains("systemisbusy") ||
                 text.contains("tryagainlater");
     }
+
+    static boolean isNotFound(String pageText) {
+        String text = CouponSafety.normalized(pageText).toLowerCase(java.util.Locale.ROOT);
+        return text.contains("404notfound") ||
+                text.contains("404pagenotfound") ||
+                text.contains("404找不到") ||
+                text.contains("找不到網頁404");
+    }
 }

@@ -83,6 +83,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
     private int reviewNotFriend;
     private int reviewScheduled;
     private int reviewBusy;
+    private int reviewNotFound;
     private int reviewUncertain;
     private int reviewEnded;
     private final ArrayList<String> reviewWinners = new ArrayList<>();
@@ -275,7 +276,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
         reviewMode = readOnly;
         manualCheck = singleManualCheck;
         reviewWins = reviewLosses = reviewNotDrawn = reviewNotFriend = reviewScheduled =
-                reviewBusy = reviewUncertain = reviewEnded = 0;
+                reviewBusy = reviewNotFound = reviewUncertain = reviewEnded = 0;
         reviewWinners.clear();
         reviewProblems.clear();
         reviewOutcomes.clear();
@@ -473,7 +474,14 @@ public final class DrawAccessibilityService extends AccessibilityService {
         DrawItem item = current();
         AccessibilityNodeInfo active = getRootInActiveWindow();
         if (active != null) {
-            try { if (!reviewMode && joinFriendIfRequired(active, item)) return; }
+            try {
+                String activeText = collectText(active, new StringBuilder(), 0).toString();
+                if (CouponPageSignals.isNotFound(activeText)) {
+                    finishItem("not_found", "連結失效（404）・保留待檢查");
+                    return;
+                }
+                if (!reviewMode && joinFriendIfRequired(active, item)) return;
+            }
             finally { active.recycle(); }
         }
         AccessibilityNodeInfo root = couponRoot();
@@ -487,6 +495,10 @@ public final class DrawAccessibilityService extends AccessibilityService {
             String packageName = root.getPackageName() == null ? "" : root.getPackageName().toString();
             String text = collectText(root, new StringBuilder(), 0).toString();
             String primaryText = text.split("其他優惠券", 2)[0];
+            if (CouponPageSignals.isNotFound(primaryText)) {
+                finishItem("not_found", "連結失效（404）・保留待檢查");
+                return;
+            }
             if (fastHandoffPending) {
                 if (normalized(text).equals(previousCouponText)) return;
                 fastHandoffPending = false;
@@ -1383,6 +1395,14 @@ public final class DrawAccessibilityService extends AccessibilityService {
                     item.status = "busy";
                     DrawData.updateItem(this, item);
                 }
+            } else if (status.equals("not_found")) {
+                reviewNotFound++;
+                if (!isTerminalStatus(item.status)) {
+                    item.status = "not_found";
+                    DrawData.updateItem(this, item);
+                }
+                if (reviewProblems.size() < 30)
+                    reviewProblems.add(item.store + " · " + item.product + "：" + reviewReason(status));
             } else if (status.equals("not_drawn") || status.equals("pending")) {
                 reviewNotDrawn++;
                 if (!isTerminalStatus(item.status)) {
@@ -1544,6 +1564,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
         result.append("未開賣：").append(reviewScheduled).append(" 筆\n");
         result.append("未加好友：").append(reviewNotFriend).append(" 筆\n");
         result.append("系統忙碌：").append(reviewBusy).append(" 筆\n");
+        result.append("連結失效（404）：").append(reviewNotFound).append(" 筆\n");
         result.append("未抽籤：").append(reviewNotDrawn).append(" 筆\n");
         result.append("已結束／免重抽：").append(reviewEnded).append(" 筆\n");
         result.append("無法判定：").append(reviewUncertain).append(" 筆\n\n");
@@ -1568,6 +1589,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
         int notFriend = 0;
         int busy = 0;
         int problems = 0;
+        int notFound = 0;
         for (DrawItem item : queue) {
             if (item.status.equals("done")) operated++;
             else if (item.status.equals("already")) already++;
@@ -1575,14 +1597,17 @@ public final class DrawAccessibilityService extends AccessibilityService {
             else if (item.status.equals("scheduled")) scheduled++;
             else if (item.status.equals("not_friend")) notFriend++;
             else if (item.status.equals("busy")) busy++;
+            else if (item.status.equals("not_found")) notFound++;
             else if (item.status.equals("error")) problems++;
         }
-        return "本次任務完成 " + queue.size() + " 筆\n\n" +
+        return "本次任務完成 " + queue.size() + " 筆\n" +
+                "耗時：" + formattedActiveDuration() + "\n\n" +
                 "已按參加抽獎：" + operated + " 筆\n" +
                 "已抽過並跳過：" + already + " 筆\n" +
                 "未開賣：" + scheduled + " 筆\n" +
                 "未加好友：" + notFriend + " 筆\n" +
                 "系統忙碌：" + busy + " 筆\n" +
+                "連結失效（404）：" + notFound + " 筆\n" +
                 "已結束：" + ended + " 筆\n" +
                 "需要確認：" + problems + " 筆\n\n" +
                 "本流程不判讀即時中獎結果，也永遠不操作「使用優惠券」。可到「結果」執行只讀重掃。";
@@ -1597,7 +1622,8 @@ public final class DrawAccessibilityService extends AccessibilityService {
 
     private String testRunReport() {
         StringBuilder report = new StringBuilder("測試流程完成 ")
-                .append(queue.size()).append(" 筆\n\n");
+                .append(queue.size()).append(" 筆\n耗時：")
+                .append(formattedActiveDuration()).append("\n\n");
         for (DrawItem item : queue) {
             report.append("• ").append(item.product).append("：")
                     .append(testStatusLabel(item.status)).append('\n');
@@ -1616,6 +1642,7 @@ public final class DrawAccessibilityService extends AccessibilityService {
         if (status.equals("win")) return "中獎畫面";
         if (status.equals("lose")) return "未中獎畫面";
         if (status.equals("error")) return "需檢查";
+        if (status.equals("not_found")) return "連結失效（404）";
         return status;
     }
 
@@ -1625,7 +1652,21 @@ public final class DrawAccessibilityService extends AccessibilityService {
         if (status.equals("busy")) return "LINE 系統忙碌，稍後可重試";
         if (status.equals("expired")) return "優惠券已結束／失效";
         if (status.equals("error")) return "頁面載入或關閉失敗";
+        if (status.equals("not_found")) return "短網址已失效（404）";
         return "畫面未明確顯示抽選結果";
+    }
+
+    private String formattedActiveDuration() {
+        long elapsed = runStartedAt == 0 ? 0 : Math.max(0, System.currentTimeMillis() - runStartedAt);
+        long pausedTime = pausedTotalMs + (paused ? Math.max(0, System.currentTimeMillis() - pausedAt) : 0);
+        long seconds = Math.max(0, elapsed - pausedTime) / 1000L;
+        long minutes = seconds / 60L;
+        long hours = minutes / 60L;
+        seconds %= 60L;
+        minutes %= 60L;
+        if (hours > 0) return hours + " 小時 " + minutes + " 分 " + seconds + " 秒";
+        if (minutes > 0) return minutes + " 分 " + seconds + " 秒";
+        return seconds + " 秒";
     }
 
     private void showOverlay() {

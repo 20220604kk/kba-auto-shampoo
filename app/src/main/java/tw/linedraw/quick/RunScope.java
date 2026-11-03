@@ -30,7 +30,7 @@ final class RunScope {
     static boolean eligible(DrawItem item) {
         return item.status.equals("pending") || item.status.equals("scheduled") ||
                 item.status.equals("not_friend") || item.status.equals("busy") ||
-                item.status.equals("error");
+                item.status.equals("error") || item.status.equals("not_found");
     }
 
     // Every item shown in the draw tab is actionable. A store or current-scope

@@ -18,5 +18,11 @@ public final class CouponPageSignalsSelfTest {
             throw new AssertionError("系統忙碌頁必須被辨識");
         if (CouponPageSignals.isBusy("參加抽獎"))
             throw new AssertionError("可抽頁不可誤判系統忙碌");
+        if (!CouponPageSignals.isNotFound("404 Not Found"))
+            throw new AssertionError("短網址失效頁必須被辨識");
+        if (!CouponPageSignals.isNotFound("404 Page Not Found"))
+            throw new AssertionError("404 文案變體必須被辨識");
+        if (CouponPageSignals.isNotFound("參加抽獎"))
+            throw new AssertionError("正常抽獎頁不可誤判 404");
     }
 }

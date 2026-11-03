@@ -1,9 +1,14 @@
 package tw.linedraw.quick;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DownloadManager;
 import android.content.ClipData;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Canvas;
@@ -118,12 +123,23 @@ public final class MainActivity extends Activity {
     private boolean cityFirst = true;
     private boolean refreshing;
     private boolean resumePromptShown;
+    private long renderedStatusRevision;
+    private boolean updateReceiverRegistered;
+    private final BroadcastReceiver updateReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (intent != null && DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction()))
+                AppUpdateManager.handleDownload(MainActivity.this,
+                        intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1));
+        }
+    };
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
     private final Runnable syncTicker = this::updateSyncButton;
     private final Runnable selectionWriter = this::flushSelectionSave;
     private final Runnable runUiTicker = new Runnable() {
         @Override public void run() {
             updateRunPanel();
+            if (!DrawAccessibilityService.isRunning() &&
+                    DrawData.statusRevision(MainActivity.this) != renderedStatusRevision) render();
             uiHandler.postDelayed(this, DrawData.lowMemoryMode(MainActivity.this) ? 750 : 350);
         }
     };
@@ -191,6 +207,7 @@ public final class MainActivity extends Activity {
         }
     }
 
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     @Override protected void onCreate(Bundle state) {
         setTheme(R.style.AppTheme);
         super.onCreate(state);
@@ -201,10 +218,15 @@ public final class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 23)
             getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
         buildScreen();
+        IntentFilter updateFilter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(updateReceiver, updateFilter, RECEIVER_NOT_EXPORTED);
+        else registerReceiver(updateReceiver, updateFilter);
+        updateReceiverRegistered = true;
         showBrandIntro(!DrawData.onboardingSeen(this));
         if (resetForUpdate) uiHandler.post(() -> Toast.makeText(this,
                 "v0.4.1 已清除上一版的本周資料，請完成認證後重新同步", Toast.LENGTH_LONG).show());
         if (DrawData.refreshedAt(this) == 0 && WeeklyLicense.status(this).valid) refreshSource();
+        AppUpdateManager.check(this, false);
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -256,28 +278,18 @@ public final class MainActivity extends Activity {
         super.onResume();
         DrawAccessibilityService.setHostAppForeground(true);
         render();
+        AppUpdateManager.resumePendingInstall(this);
         uiHandler.removeCallbacks(runUiTicker);
         uiHandler.post(runUiTicker);
         String report = DrawData.takeReviewReport(this);
-        if (!report.isEmpty()) uiHandler.post(() -> new AlertDialog.Builder(this)
-                .setTitle(report.startsWith("手動連結") ? "手動抽選核對" : "全台重掃結果")
-                .setMessage(report).setPositiveButton("知道了", null).show());
+        if (!report.isEmpty()) uiHandler.post(() -> showStyledReport(
+                report.startsWith("手動連結") ? "手動抽選核對" : "掃描報告", report, false));
         else {
             String runReport = DrawData.takeRunReport(this);
             boolean testRun = DrawData.takeRunReportWasTest(this);
             if (!runReport.isEmpty()) {
                 if (testRun) setMode("test");
-                uiHandler.post(() -> new AlertDialog.Builder(this)
-                        .setTitle("本次抽選完成")
-                        .setMessage(runReport)
-                        .setPositiveButton(testRun ? "查看測試紀錄" : "查看結果",
-                                (dialog, which) -> {
-                                    if (testRun) {
-                                        setMode("test");
-                                        testRecordsDialog();
-                                    } else setMode("done");
-                                })
-                        .setNegativeButton("關閉", null).show());
+                uiHandler.post(() -> showCompletionCard(runReport, testRun));
                 return;
             }
             String manualKey = DrawData.takeManualOpen(this);
@@ -290,6 +302,10 @@ public final class MainActivity extends Activity {
         uiHandler.removeCallbacks(syncTicker);
         uiHandler.removeCallbacks(selectionWriter);
         uiHandler.removeCallbacks(runUiTicker);
+        if (updateReceiverRegistered) {
+            unregisterReceiver(updateReceiver);
+            updateReceiverRegistered = false;
+        }
         super.onDestroy();
     }
 
@@ -768,6 +784,10 @@ public final class MainActivity extends Activity {
     }
 
     private void setMode(String value) {
+        // A scan runs in the accessibility service and may update items while this
+        // Activity is still alive. Always enter a tab from the persisted source of
+        // truth instead of reusing a stale in-memory list.
+        reloadLatestData();
         mode = value;
         reviewFilter = "all";
         testNeedsReviewOnly = false;
@@ -777,7 +797,6 @@ public final class MainActivity extends Activity {
         updateOverview();
         updateFilters();
         updateReviewPanel();
-        if (value.equals("all")) pruneHiddenSelections();
         renderList();
     }
 
@@ -820,13 +839,18 @@ public final class MainActivity extends Activity {
 
     private void render() {
         if (content == null) return;
-        items = DrawData.load(this);
-        reviewOutcomes = DrawData.loadReviewOutcomes(this);
+        reloadLatestData();
         updateOverview();
         updateSyncButton();
         updateFilters();
         updateReviewPanel();
         renderList();
+    }
+
+    private void reloadLatestData() {
+        items = DrawData.load(this);
+        reviewOutcomes = DrawData.loadReviewOutcomes(this);
+        renderedStatusRevision = DrawData.statusRevision(this);
     }
 
     private int interruptedSelectionCount() {
@@ -1044,7 +1068,7 @@ public final class MainActivity extends Activity {
 
     private boolean isReviewProblem(String outcome) {
         return outcome.equals("mismatch") || outcome.equals("unknown") ||
-                outcome.equals("error");
+                outcome.equals("error") || outcome.equals("not_found");
     }
 
     private boolean isKnownResult(String outcome) {
@@ -1114,7 +1138,6 @@ public final class MainActivity extends Activity {
         reviewFilter = filter;
         displayLimit = displayPageSize();
         updateReviewPanel();
-        if (mode.equals("all")) pruneHiddenSelections();
         renderList();
     }
 
@@ -1486,7 +1509,6 @@ public final class MainActivity extends Activity {
     private void filtersChanged() {
         displayLimit = displayPageSize();
         updateFilters();
-        pruneHiddenSelections();
         updateReviewPanel();
         renderList();
     }
@@ -1647,19 +1669,6 @@ public final class MainActivity extends Activity {
             return !matchesReviewFilter(outcome);
         });
         return StoreGroups.ordered(shown);
-    }
-
-    private void pruneHiddenSelections() {
-        Set<String> shownKeys = new HashSet<>();
-        for (DrawItem item : visibleScope()) shownKeys.add(item.key());
-        boolean changed = false;
-        for (DrawItem item : items) {
-            if (item.selected && !shownKeys.contains(item.key())) {
-                item.selected = false;
-                changed = true;
-            }
-        }
-        if (changed) scheduleSelectionSave();
     }
 
     private void renderList() {
@@ -1861,6 +1870,7 @@ public final class MainActivity extends Activity {
             case "already": return "已抽籤";
             case "expired": return "已結束";
             case "error": return "待重新檢查";
+            case "not_found": return "連結失效";
             default: return "待重新檢查";
         }
     }
@@ -1871,6 +1881,7 @@ public final class MainActivity extends Activity {
             case "scheduled": return 0xFFFFF3DA;
             case "not_friend": return 0xFFFFF7E9;
             case "busy": return 0xFFFDE9E7;
+            case "not_found": return 0xFFFDE9E7;
             case "lose":
             case "expired": return 0xFFFDE9E7;
             case "pending": return 0xFFE8F2FF;
@@ -1884,6 +1895,7 @@ public final class MainActivity extends Activity {
             case "scheduled": return 0xFF946007;
             case "not_friend": return 0xFF76521A;
             case "busy": return 0xFFA03E39;
+            case "not_found": return 0xFFA03E39;
             case "lose":
             case "expired": return 0xFFA03E39;
             case "pending": return 0xFF315F9B;
@@ -1903,6 +1915,7 @@ public final class MainActivity extends Activity {
             case "already": return "已抽籤・結果待確認";
             case "expired": return "已結束";
             case "error": return "待重新檢查";
+            case "not_found": return "連結失效（404）";
             default: return "待重新檢查";
         }
     }
@@ -2307,7 +2320,10 @@ public final class MainActivity extends Activity {
 
         Button help = button("使用說明");
         form.addView(help);
-        for (Button action : new Button[]{floating, portrait, permission, weeklyLicense, help}) {
+        Button update = button("檢查 APP 更新 · 目前 v" + appVersionName());
+        update.setOnClickListener(v -> AppUpdateManager.check(this, true));
+        form.addView(update);
+        for (Button action : new Button[]{floating, portrait, permission, weeklyLicense, help, update}) {
             action.setBackground(roundedBackground(0xEEFFFFFF, 0xFFE0E6E2, 14));
             action.setTextColor(navy);
         }
@@ -2611,9 +2627,8 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("測試紀錄（最近三筆）")
                 .setItems(labels, (dialog, which) -> {
                     DrawData.ReviewReportEntry report = reports.get(which);
-                    new AlertDialog.Builder(this)
-                            .setTitle(format.format(new Date(report.at)) + " 測試紀錄")
-                            .setMessage(report.text).setPositiveButton("關閉", null).show();
+                    showStyledReport(format.format(new Date(report.at)) + " 測試紀錄",
+                            report.text, true);
                 }).setNegativeButton("關閉", null).show();
     }
 
@@ -2639,8 +2654,76 @@ public final class MainActivity extends Activity {
 
     private void showReport(DrawData.ReviewReportEntry report) {
         String title = new SimpleDateFormat("M/d HH:mm 掃描報告", Locale.TAIWAN).format(new Date(report.at));
-        new AlertDialog.Builder(this).setTitle(title).setMessage(report.text)
-                .setPositiveButton("關閉", null).show();
+        showStyledReport(title, report.text, false);
+    }
+
+    private LinearLayout reportCardBody(String title, String report, boolean success) {
+        LinearLayout body = vertical();
+        body.setPadding(dp(22), dp(12), dp(22), dp(18));
+
+        ImageView cat = new ImageView(this);
+        cat.setImageResource(success ? R.drawable.ken_cat_success : R.drawable.ken_cat_scan);
+        cat.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        body.addView(cat, new LinearLayout.LayoutParams(-1, dp(success ? 160 : 118)));
+
+        TextView heading = text(title, success ? 22 : 19, navy);
+        heading.setTypeface(null, Typeface.BOLD);
+        heading.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams headingParams = new LinearLayout.LayoutParams(-1, -2);
+        headingParams.topMargin = dp(4);
+        headingParams.bottomMargin = dp(12);
+        body.addView(heading, headingParams);
+
+        TextView details = text(report, 14, 0xFF425B59);
+        details.setLineSpacing(dp(3), 1.08f);
+        details.setPadding(dp(16), dp(14), dp(16), dp(14));
+        details.setBackground(roundedBackground(success ? 0xFFEAF8F1 : 0xFFF5F8F7,
+                success ? 0xFFCBE7D9 : 0xFFDDE7E3, 18));
+        body.addView(details, new LinearLayout.LayoutParams(-1, -2));
+        return body;
+    }
+
+    private void showCompletionCard(String report, boolean testRun) {
+        LinearLayout body = reportCardBody(testRun ? "測試完成，貓貓過關！" :
+                "洗頭貓貓完成任務！", report, true);
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setView(body)
+                .setPositiveButton(testRun ? "查看測試紀錄" : "查看結果", (d, which) -> {
+                    if (testRun) {
+                        setMode("test");
+                        testRecordsDialog();
+                    } else setMode("done");
+                })
+                .setNegativeButton("關閉", null)
+                .create();
+        dialog.setOnShowListener(ignored -> {
+            View window = dialog.getWindow() == null ? null : dialog.getWindow().getDecorView();
+            if (window != null && !DrawData.lowMemoryMode(this)) {
+                window.setScaleX(.97f);
+                window.setScaleY(.97f);
+                window.setAlpha(.2f);
+                window.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(220)
+                        .setInterpolator(new DecelerateInterpolator()).start();
+            }
+        });
+        dialog.show();
+    }
+
+    private void showStyledReport(String title, String report, boolean testReport) {
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(reportCardBody(title, report, false));
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setView(scroll)
+                .setPositiveButton("關閉", null)
+                .create();
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            int maxHeight = Math.min(dp(700), getResources().getDisplayMetrics().heightPixels - dp(120));
+            if (scroll.getLayoutParams() != null) {
+                scroll.getLayoutParams().height = maxHeight;
+                scroll.requestLayout();
+            }
+        }
     }
 
     private void confirmItemReview(DrawItem item) {
